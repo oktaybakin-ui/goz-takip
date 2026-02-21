@@ -146,26 +146,26 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
   const canStart = previews.length >= MIN_IMAGE_COUNT && previews.length <= MAX_IMAGE_COUNT;
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-950 p-6">
-      <div className="absolute top-4 right-4 flex items-center gap-2">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-950 p-4 sm:p-6 pb-24 sm:pb-6">
+      <div className="absolute top-4 right-4 flex items-center gap-2 z-10">
         <span className="text-gray-500 text-sm">TR</span>
         <button
           type="button"
           onClick={() => setLang(lang === "tr" ? "en" : "tr")}
-          className="px-2 py-1 rounded bg-gray-800 text-gray-300 text-sm hover:bg-gray-700"
+          className="px-2 py-1 rounded bg-gray-800 text-gray-300 text-sm hover:bg-gray-700 min-h-[44px] min-w-[44px] touch-manipulation"
           aria-label={lang === "tr" ? "Switch to English" : "Türkçe'ye geç"}
         >
           {lang === "tr" ? "EN" : "TR"}
         </button>
       </div>
-      <div className="text-center mb-8">
-        <h1 className="text-4xl font-bold text-white mb-3">
+      <div className="text-center mb-4 sm:mb-8">
+        <h1 className="text-2xl sm:text-4xl font-bold text-white mb-2 sm:mb-3">
           👁️ {t.appTitle}
         </h1>
-        <p className="text-gray-400 text-lg max-w-lg">
+        <p className="text-gray-400 text-sm sm:text-lg max-w-lg mx-auto">
           {t.upload10Subtitle}
         </p>
-        <p className="text-gray-500 text-sm mt-2 max-w-lg">
+        <p className="text-gray-500 text-xs sm:text-sm mt-1 sm:mt-2 max-w-lg mx-auto">
           🔒 {t.privacyNote}
         </p>
       </div>
@@ -202,7 +202,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
           </label>
         </div>
       ) : (
-        <div className="flex flex-col items-center gap-6 w-full max-w-4xl">
+        <div className="flex flex-col items-center gap-4 sm:gap-6 w-full max-w-4xl">
           {isUploading && (
             <div className="w-full max-w-xs">
               <p className="text-gray-400 text-sm mb-2">
@@ -216,10 +216,11 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
               </div>
             </div>
           )}
-          <p className="text-gray-400">
+          <p className="text-gray-400 text-sm">
             {t.photosLabel} {previews.length} / {MAX_IMAGE_COUNT}
           </p>
-          <div className="flex flex-col sm:flex-row flex-wrap gap-3 w-full justify-center items-center">
+          {/* Masaüstü: butonlar burada */}
+          <div className="hidden sm:flex flex-col sm:flex-row flex-wrap gap-3 w-full justify-center items-center">
             <button
               type="button"
               onClick={handleStartWithoutCrop}
@@ -238,9 +239,9 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
               {t.cropThenStart}
             </button>
           </div>
-          <div className="grid grid-cols-5 gap-3 w-full">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3 w-full">
             {previews.map((url, i) => (
-              <div key={i} className="relative group rounded-xl overflow-hidden border-2 border-gray-700 bg-gray-900">
+              <div key={i} className="relative group rounded-lg sm:rounded-xl overflow-hidden border-2 border-gray-700 bg-gray-900">
                 <img src={url} alt={`Foto ${i + 1}`} className="w-full aspect-square object-cover" />
                 <span className="absolute top-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
                   {i + 1}
@@ -248,7 +249,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
                 <button
                   type="button"
                   onClick={() => removePreview(i)}
-                  className="absolute top-1 right-1 w-6 h-6 rounded-full bg-red-600/90 text-white text-sm opacity-0 group-hover:opacity-100 transition"
+                  className="absolute top-1 right-1 w-8 h-8 sm:w-6 sm:h-6 rounded-full bg-red-600/90 text-white text-sm opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition touch-manipulation flex items-center justify-center"
                   aria-label={t.remove}
                 >
                   ×
@@ -256,7 +257,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
               </div>
             ))}
           </div>
-          <div className="flex gap-3 flex-wrap justify-center">
+          <div className="hidden sm:flex gap-3 flex-wrap justify-center">
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -290,6 +291,37 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
             </button>
           </div>
 
+          {/* Mobil: sabit alt çubuk - Analizi Başlat her zaman görünsün */}
+          <div className="sm:hidden fixed bottom-0 left-0 right-0 p-3 bg-gray-950/95 backdrop-blur border-t border-gray-800 z-20 safe-area-pb">
+            <div className="flex flex-col gap-2 max-w-lg mx-auto">
+              <button
+                type="button"
+                onClick={handleStartWithoutCrop}
+                disabled={!canStart || isUploading || isCropping}
+                className="w-full min-h-[48px] px-4 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg touch-manipulation text-base"
+              >
+                {t.startAnalysis10}
+              </button>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 min-h-[44px] px-3 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm touch-manipulation"
+                >
+                  {t.addMore}
+                </button>
+                <button
+                  type="button"
+                  onClick={handleConfirm}
+                  disabled={!canStart || isUploading || isCropping}
+                  className="flex-1 min-h-[44px] px-3 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm touch-manipulation disabled:opacity-50"
+                >
+                  {t.cropThenStart}
+                </button>
+              </div>
+            </div>
+          </div>
+
           {isCropping && (
             <div className="fixed inset-0 bg-gray-950/95 flex flex-col items-center justify-center gap-4 z-50">
               <p className="text-white text-lg">{t.croppingFaces}</p>
@@ -315,7 +347,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-12 max-w-4xl">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-6 sm:mt-12 max-w-4xl w-full">
         <FeatureCard
           icon="25 + 5"
           title="Kalibrasyon"
