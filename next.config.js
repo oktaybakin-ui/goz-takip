@@ -1,8 +1,5 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: "export",
-  basePath: "/goz-takip",
-  assetPrefix: "/goz-takip/",
   async headers() {
     return [
       {

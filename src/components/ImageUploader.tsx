@@ -116,15 +116,23 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
     if (previews.length < MIN_IMAGE_COUNT || previews.length > MAX_IMAGE_COUNT) return;
     setIsCropping(true);
     setCroppingProgress({ current: 0, total: previews.length });
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      onImagesSelected(previews);
+      setIsCropping(false);
+    }, 20000);
     try {
       const cropped = await cropImagesToFace(
         previews,
         0.25,
         (done, total) => setCroppingProgress({ current: done, total })
       );
-      onImagesSelected(cropped);
+      clearTimeout(timeout);
+      if (!timedOut) onImagesSelected(cropped);
     } catch {
-      onImagesSelected(previews);
+      clearTimeout(timeout);
+      if (!timedOut) onImagesSelected(previews);
     } finally {
       setIsCropping(false);
     }
@@ -211,15 +219,16 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
           <p className="text-gray-400">
             {t.photosLabel} {previews.length} / {MAX_IMAGE_COUNT}
           </p>
-          <div className="flex flex-wrap gap-3 w-full justify-center">
+          <div className="flex flex-col sm:flex-row flex-wrap gap-3 w-full justify-center items-center">
             <button
               type="button"
               onClick={handleStartWithoutCrop}
-              disabled={!canStart || isUploading}
-              className="px-8 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
+              disabled={!canStart || isUploading || isCropping}
+              className="px-8 py-4 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg text-lg"
             >
               {t.startAnalysis10}
             </button>
+            <p className="text-gray-500 text-sm">veya</p>
             <button
               type="button"
               onClick={handleConfirm}
@@ -266,7 +275,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
             <button
               type="button"
               onClick={handleStartWithoutCrop}
-              disabled={!canStart || isUploading}
+              disabled={!canStart || isUploading || isCropping}
               className="px-8 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition shadow-lg"
             >
               {t.startAnalysis10}
