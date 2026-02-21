@@ -17,6 +17,7 @@ const nextConfig = {
               "img-src 'self' data: blob:",
               "media-src 'self' blob:",
               "connect-src 'self' https://cdn.jsdelivr.net https://vercel.live",
+              "frame-src https://vercel.live",
               "frame-ancestors 'none'",
             ].join("; "),
           },
