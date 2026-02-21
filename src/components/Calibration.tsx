@@ -307,59 +307,57 @@ export default function Calibration({
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
-      {/* Talimat ekranı */}
+      {/* Talimat ekranı — temiz, profesyonel */}
       {state.phase === "instructions" && (
-        <div className="bg-gray-900 rounded-2xl p-8 max-w-lg mx-auto text-center shadow-2xl border border-gray-700">
-          <div className="text-5xl mb-6">👁️</div>
-          <h2 className="text-2xl font-bold text-white mb-4">
-            Kalibrasyon Başlıyor
-          </h2>
-          <div className="text-gray-300 space-y-3 mb-8 text-left">
-            <p className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">●</span>
-              Başını mümkün olduğunca sabit tut.
-            </p>
-            <p className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">●</span>
-              Ekranda beliren noktaya sadece gözlerinle bak.
-            </p>
-            <p className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">●</span>
-              Noktalar ekranın her tarafında görünecek.
-            </p>
-            <p className="flex items-start gap-2">
-              <span className="text-blue-400 mt-1">●</span>
-              Gözünü noktadan ayırırsan kalibrasyon uzayabilir.
-            </p>
+        <div className="bg-gray-900 rounded-2xl p-8 max-w-md mx-auto text-center shadow-2xl border border-gray-700">
+          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-blue-500/10 border-2 border-blue-500/30 flex items-center justify-center">
+            <span className="text-4xl">👁️</span>
           </div>
-          <div className="flex flex-col gap-3 items-center">
+          <h2 className="text-2xl font-bold text-white mb-2">
+            Kalibrasyon
+          </h2>
+          <p className="text-gray-400 text-sm mb-6">
+            Yaklaşık 30 saniye sürer. Ekrana bakmanız yeterli.
+          </p>
+
+          <div className="text-gray-300 space-y-2 mb-8 text-left text-sm">
+            <div className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2.5">
+              <span className="text-blue-400 text-lg">1</span>
+              <span>Başını sabit tut</span>
+            </div>
+            <div className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2.5">
+              <span className="text-blue-400 text-lg">2</span>
+              <span>Beliren noktaya sadece gözlerinle bak</span>
+            </div>
+            <div className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2.5">
+              <span className="text-blue-400 text-lg">3</span>
+              <span>Nokta kaybolana kadar bekle</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={beginCalibration}
+              className="w-full px-8 py-3.5 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 transition shadow-lg text-base"
+            >
+              Kalibrasyonu Başlat
+            </button>
             {storedInfo && (
               <button
                 onClick={handleLoadStored}
-                className="w-full px-6 py-3 bg-green-700/80 text-white rounded-lg hover:bg-green-600 transition text-sm"
-                aria-label="Kayıtlı kalibrasyonu kullan"
+                className="w-full px-6 py-2.5 bg-gray-800 text-gray-300 rounded-xl hover:bg-gray-700 transition text-sm"
               >
-                📂 Kayıtlı kalibrasyonu kullan (~{Math.round(storedInfo.meanErrorPx)} px, {new Date(storedInfo.savedAt).toLocaleDateString("tr-TR")})
+                Kayıtlı kalibrasyonu kullan (~{Math.round(storedInfo.meanErrorPx)} px)
               </button>
             )}
-            <div className="flex gap-3 justify-center">
-              {onCancel && (
-                <button
-                  onClick={onCancel}
-                  className="px-6 py-3 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition"
-                  aria-label="İptal"
-                >
-                  İptal
-                </button>
-              )}
+            {onCancel && (
               <button
-                onClick={beginCalibration}
-                className="px-8 py-3 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-500 transition shadow-lg"
-                aria-label="Yeni kalibrasyon başlat"
+                onClick={onCancel}
+                className="text-gray-500 hover:text-gray-400 text-sm mt-1 transition"
               >
-                Yeni kalibrasyon (25 nokta)
+                Geri Dön
               </button>
-            </div>
+            )}
           </div>
         </div>
       )}
@@ -481,104 +479,77 @@ export default function Calibration({
         </div>
       )}
 
-      {/* Kalibrasyon tamamlandı — 3 kademeli doğrulama geri bildirimi (araştırma: kullanıcıya net sonuç) */}
-      {state.phase === "complete" && (
-        <div className="bg-gray-900 rounded-2xl p-8 max-w-lg mx-auto text-center shadow-2xl border border-gray-700">
-          <div className="text-5xl mb-6">✅</div>
-          <h2 className="text-2xl font-bold text-white mb-4">
-            {t.calibrationComplete}
-          </h2>
-          <div className="bg-gray-800 rounded-xl p-4 mb-4">
-            <p className="text-gray-400 text-sm">Ortalama Hata (doğrulama)</p>
-            <p
-              className={`text-3xl font-bold ${
-                (state.meanError || 0) <= 50
-                  ? "text-green-400"
-                  : (state.meanError || 0) <= 85
-                  ? "text-yellow-400"
-                  : "text-red-400"
-              }`}
-            >
-              {Math.round(state.meanError || 0)} px
-            </p>
-            {/* Per-point hata dağılımı */}
-            {validationErrorsRef.current.length > 0 && (
-              <div className="mt-3 grid grid-cols-5 gap-1">
-                {["Merkez", "Sol Üst", "Sağ Üst", "Sol Alt", "Sağ Alt"].map((label, i) => {
-                  const err = validationErrorsRef.current[i];
-                  if (err === undefined) return null;
-                  const color = err <= 50 ? "text-green-400" : err <= 85 ? "text-yellow-400" : "text-red-400";
-                  return (
-                    <div key={i} className="text-center">
-                      <p className="text-gray-500 text-[10px]">{label}</p>
-                      <p className={`text-xs font-semibold ${color}`}>{Math.round(err)}px</p>
-                    </div>
-                  );
-                })}
+      {/* Kalibrasyon tamamlandı — RealEye benzeri kalite derecelendirme */}
+      {state.phase === "complete" && (() => {
+        const err = state.meanError || 0;
+        const grade = err <= 50 ? "A" : err <= 75 ? "B" : err <= 110 ? "C" : "D";
+        const gradeLabel = err <= 50 ? "Mükemmel" : err <= 75 ? "İyi" : err <= 110 ? "Kabul Edilebilir" : "Düşük";
+        const gradeColor = err <= 50 ? "text-green-400" : err <= 75 ? "text-blue-400" : err <= 110 ? "text-yellow-400" : "text-red-400";
+        const gradeBg = err <= 50 ? "bg-green-500/10 border-green-500/30" : err <= 75 ? "bg-blue-500/10 border-blue-500/30" : err <= 110 ? "bg-yellow-500/10 border-yellow-500/30" : "bg-red-500/10 border-red-500/30";
+        const canProceed = err <= 150;
+
+        return (
+          <div className="bg-gray-900 rounded-2xl p-8 max-w-md mx-auto text-center shadow-2xl border border-gray-700">
+            {/* Kalite rozeti */}
+            <div className={`inline-flex items-center justify-center w-24 h-24 rounded-full border-4 mb-6 ${gradeBg}`}>
+              <span className={`text-5xl font-black ${gradeColor}`}>{grade}</span>
+            </div>
+
+            <h2 className="text-2xl font-bold text-white mb-1">
+              {t.calibrationComplete}
+            </h2>
+            <p className={`text-lg font-semibold mb-4 ${gradeColor}`}>{gradeLabel}</p>
+
+            {/* Doğruluk barı */}
+            <div className="bg-gray-800 rounded-xl p-4 mb-5">
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-gray-400 text-sm">Doğruluk</span>
+                <span className={`text-sm font-bold ${gradeColor}`}>~{Math.round(err)} px</span>
               </div>
-            )}
-          </div>
-          <p
-            className={`text-sm mb-4 ${
-              (state.meanError || 0) <= 50
-                ? "text-green-400"
-                : (state.meanError || 0) <= 75
-                ? "text-yellow-400"
-                : "text-red-400"
-            }`}
-          >
-            {(state.meanError || 0) <= 50
-              ? t.calibrationValidationGood
-              : (state.meanError || 0) <= 75
-              ? t.calibrationValidationFair
-              : t.calibrationValidationPoor}
-          </p>
-
-          {(state.meanError || 0) > 75 && (
-            <div className="mb-6 p-4 bg-red-900/40 border border-red-500/60 rounded-xl">
-              <p className="text-red-300 text-sm font-medium">{t.calibrationQualityLow}</p>
+              <div className="w-full bg-gray-700 rounded-full h-2.5">
+                <div
+                  className={`h-2.5 rounded-full transition-all ${
+                    err <= 50 ? "bg-green-500" : err <= 75 ? "bg-blue-500" : err <= 110 ? "bg-yellow-500" : "bg-red-500"
+                  }`}
+                  style={{ width: `${Math.max(5, Math.min(100, 100 - (err / 2)))}%` }}
+                />
+              </div>
+              <p className="text-gray-500 text-xs mt-2">
+                {err <= 75
+                  ? "Kalibrasyon başarılı, analiz için hazır."
+                  : err <= 110
+                  ? "Kabul edilebilir doğruluk. Daha iyi sonuç için tekrar deneyin."
+                  : "Düşük doğruluk. Tekrar kalibrasyon önerilir."}
+              </p>
             </div>
-          )}
 
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={handleSaveCalibration}
-              className="w-full px-6 py-2 bg-amber-700/80 text-white rounded-lg hover:bg-amber-600 transition text-sm"
-              aria-label="Kalibrasyonu cihaza kaydet"
-            >
-              💾 Kalibrasyonu kaydet (sonraki sefer atla)
-            </button>
-            <div className="flex flex-col sm:flex-row gap-3 justify-center items-center">
-              {(state.meanError || 0) > 75 ? (
+            <div className="flex flex-col gap-3">
+              {canProceed && (
                 <button
-                  onClick={handleRetry}
-                  className="px-8 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-500 transition shadow-lg w-full sm:w-auto"
-                  aria-label="Tekrar kalibre et"
+                  onClick={() => {
+                    handleSaveCalibration();
+                    handleComplete();
+                  }}
+                  className="w-full px-8 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg text-base"
                 >
-                  🔄 Tekrar Kalibre Et
+                  Analize Başla
                 </button>
-              ) : (
-                <>
-                  <button
-                    onClick={handleRetry}
-                    className="px-6 py-3 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition"
-                    aria-label="Tekrar kalibre et"
-                  >
-                    Tekrar Kalibre Et
-                  </button>
-                  <button
-                    onClick={handleComplete}
-                    className="px-8 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-500 transition shadow-lg"
-                    aria-label="Devam et"
-                  >
-                    {t.continue}
-                  </button>
-                </>
               )}
+
+              <button
+                onClick={handleRetry}
+                className={`w-full px-6 py-3 rounded-xl font-semibold transition ${
+                  canProceed
+                    ? "bg-gray-800 text-gray-300 hover:bg-gray-700 text-sm"
+                    : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg text-base"
+                }`}
+              >
+                Tekrar Kalibre Et
+              </button>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Kalibrasyon başarısız */}
       {state.phase === "failed" && (

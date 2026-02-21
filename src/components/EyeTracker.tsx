@@ -930,7 +930,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       {/* Tracking */}
       {phase === "tracking" && (
         <div className="flex flex-col items-center gap-4">
-          {/* Üst bilgi barı */}
+          {/* Üst bilgi barı — kullanıcıya sadece gerekli bilgi */}
           <div className="w-full max-w-4xl flex flex-col gap-3">
             <div className="flex flex-wrap items-center gap-4 bg-gray-900 rounded-xl px-6 py-3 shadow-lg">
               <div className="flex items-center gap-2">
@@ -943,40 +943,19 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
                   {isTracking ? "Takip Ediliyor" : "Hazır"}
                 </span>
               </div>
-              <div className="text-gray-500">|</div>
-              <span className="text-gray-400 text-sm">{fps} FPS</span>
-              <div className="text-gray-500">|</div>
-              <span
-                className="text-gray-400 text-sm"
-                title="Göz bölgesi yakınlaştırma (iris hassasiyeti). Açık: kamera 640px+ ve yüz algılandı."
-              >
-                Göz zoom: {eyeZoomActive ? "açık" : "kapalı"}
-              </span>
-              <div className="text-gray-500">|</div>
               <span className="text-gray-400 text-sm">
-                Süre: {formatTime(trackingDuration)}
+                {formatTime(trackingDuration)}
               </span>
-              {resizeWarning && (
-                <>
-                  <div className="text-gray-500">|</div>
-                  <span className="text-amber-400 text-sm font-medium animate-pulse">
-                    ⚠ Pencere boyutu değişti – tekrar kalibrasyon önerilir
-                  </span>
-                </>
-              )}
               {isMultiImage && (
-                <>
-                  <div className="text-gray-500">|</div>
-                  <span aria-live="polite" className="text-blue-300 text-sm font-medium">
-                    Foto {currentImageIndex + 1}/{imageCount} · {Math.max(0, Math.ceil((IMAGE_DURATION_MS - trackingDuration) / 1000))} s kaldı
-                  </span>
-                </>
+                <span aria-live="polite" className="text-blue-300 text-sm font-medium">
+                  Foto {currentImageIndex + 1}/{imageCount} · {Math.max(0, Math.ceil((IMAGE_DURATION_MS - trackingDuration) / 1000))} s kaldı
+                </span>
               )}
-              <div className="text-gray-500">|</div>
-              <span className="text-gray-400 text-sm">
-                Fixation: {fixations.length}
-              </span>
-              <span className="text-gray-500 text-xs ml-auto">Space: başlat/durdur · H: heatmap</span>
+              {resizeWarning && (
+                <span className="text-amber-400 text-sm font-medium animate-pulse">
+                  ⚠ Pencere boyutu değişti
+                </span>
+              )}
             </div>
             {isMultiImage && isTracking && (
               <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
@@ -1061,96 +1040,23 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
             )}
           </div>
 
-          {/* Kontrol butonları */}
-          <div className="flex gap-3">
+          {/* Sadece Takibi Başlat / Durdur — kullanıcıya gelişmiş kontroller gösterilmez */}
+          <div className="flex flex-wrap gap-2 sm:gap-3 touch-manipulation">
             {!isTracking ? (
               <button
                 onClick={startTracking}
-                className="px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg flex items-center gap-2 focus:ring-2 focus:ring-green-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-                aria-label="Takibi başlat (Space)"
+                className="min-h-[44px] min-w-[44px] px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg flex items-center gap-2 focus:ring-2 focus:ring-green-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
+                aria-label="Takibi başlat"
               >
                 <span>▶</span> Takibi Başlat
               </button>
             ) : (
               <button
                 onClick={stopTracking}
-                className="px-6 py-3 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-500 transition shadow-lg flex items-center gap-2 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-                aria-label="Takibi durdur (Space)"
+                className="min-h-[44px] min-w-[44px] px-6 py-3 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-500 transition shadow-lg flex items-center gap-2 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
+                aria-label="Takibi durdur"
               >
                 <span>⏹</span> Takibi Durdur
-              </button>
-            )}
-
-            <button
-              onClick={() => setShowHeatmap(!showHeatmap)}
-              aria-label="Heatmap aç/kapa (H)"
-              className={`px-4 py-3 rounded-xl transition focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none ${
-                showHeatmap
-                  ? "bg-orange-600 text-white focus:ring-orange-400"
-                  : "bg-gray-700 text-gray-300 hover:bg-gray-600 focus:ring-gray-500"
-              }`}
-            >
-              🔥 Heatmap
-            </button>
-
-            <button
-              onClick={() => setShowRawScreenGaze((v) => !v)}
-              className={`px-4 py-3 rounded-xl transition focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none ${
-                showRawScreenGaze ? "bg-amber-600 text-white focus:ring-amber-400" : "bg-gray-700 text-gray-300 hover:bg-gray-600 focus:ring-gray-500"
-              }`}
-              title="Modelin ekranda tahmin ettiği ham noktayı göster"
-            >
-              📍 Ham nokta
-            </button>
-            <button
-              onClick={() => setFlipGazeX((v) => !v)}
-              className={`px-3 py-3 rounded-xl text-sm transition focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none ${
-                flipGazeX ? "bg-amber-600 text-white focus:ring-amber-400" : "bg-gray-700 text-gray-300 hover:bg-gray-600 focus:ring-gray-500"
-              }`}
-              title="Tahmin X eksenini ters çevir (nokta yanlış yatayda ise dene)"
-            >
-              X ters
-            </button>
-            <button
-              onClick={() => setFlipGazeY((v) => !v)}
-              className={`px-3 py-3 rounded-xl text-sm transition focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none ${
-                flipGazeY ? "bg-amber-600 text-white focus:ring-amber-400" : "bg-gray-700 text-gray-300 hover:bg-gray-600 focus:ring-gray-500"
-              }`}
-              title="Tahmin Y eksenini ters çevir (nokta yanlış dikeyde ise dene)"
-            >
-              Y ters
-            </button>
-            <button
-              onClick={handleLookHereOffset}
-              className="px-4 py-3 bg-emerald-700 text-white rounded-xl hover:bg-emerald-600 transition focus:ring-2 focus:ring-emerald-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-              title={t.lookHereThenClick}
-            >
-              👁️ Burada bakıyorum
-            </button>
-            <button
-              onClick={() => {
-                setUserOffset(null);
-                lookHereOffsetsRef.current = [];
-              }}
-              className="px-3 py-3 bg-gray-700 text-gray-300 rounded-xl hover:bg-gray-600 transition text-sm focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-              title="Ortala düzeltmesini kaldır"
-            >
-              Offset sıfırla
-            </button>
-            <button
-              onClick={handleDriftCorrection}
-              className="px-4 py-3 bg-gray-700 text-gray-300 rounded-xl hover:bg-gray-600 transition focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-              title="Drift düzeltme"
-            >
-              🎯 Drift Düzelt
-            </button>
-
-            {onReset && (
-              <button
-                onClick={onReset}
-                className="px-4 py-3 bg-gray-700 text-gray-300 rounded-xl hover:bg-gray-600 transition focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-              >
-                🔄 Yeni Görüntü
               </button>
             )}
           </div>
@@ -1185,7 +1091,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
       {/* Kamera önizleme */}
       {(phase === "tracking" || phase === "calibration") && (
-        <div className="fixed bottom-4 right-4 w-40 h-30 rounded-lg overflow-hidden border-2 border-gray-600 shadow-lg bg-black z-40">
+        <div className="fixed bottom-4 right-4 w-24 h-[4.5rem] sm:w-40 sm:h-[7.5rem] rounded-lg overflow-hidden border-2 border-gray-600 shadow-lg bg-black z-40">
           <CameraPreview faceTracker={faceTrackerRef.current} />
           <div className="absolute top-1 left-1 bg-black/60 rounded px-1 text-xs text-green-400">
             CAM

@@ -155,15 +155,30 @@ export class FaceTracker {
     try {
       // Kamera zaten açıksa tekrar açma
       if (!this.cameraInitialized) {
-        // Maksimum çözünürlük = daha hassas göz bebeği (mm seviyesi için 1080p tercih)
-        this.stream = await navigator.mediaDevices.getUserMedia({
-          video: {
+        // Önce yüksek çözünürlük dene; mobilde çoğu cihaz 1280x720 desteklemez, fallback kullan
+        const constraintsList: MediaTrackConstraints[] = [
+          {
             width: { ideal: 1920, min: 1280 },
             height: { ideal: 1080, min: 720 },
             frameRate: { ideal: 30, min: 20 },
             facingMode: "user",
           },
-        });
+          { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+          { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+          { facingMode: "user" },
+        ];
+        let lastError: Error | null = null;
+        for (const video of constraintsList) {
+          try {
+            this.stream = await navigator.mediaDevices.getUserMedia({ video });
+            break;
+          } catch (e) {
+            lastError = e as Error;
+          }
+        }
+        if (!this.stream) {
+          throw lastError ?? new Error("Kamera açılamadı.");
+        }
 
         videoElement.srcObject = this.stream;
         await new Promise<void>((resolve, reject) => {
