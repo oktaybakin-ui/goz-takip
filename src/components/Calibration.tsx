@@ -486,7 +486,6 @@ export default function Calibration({
         const gradeLabel = err <= 50 ? "Mükemmel" : err <= 75 ? "İyi" : err <= 110 ? "Kabul Edilebilir" : "Düşük";
         const gradeColor = err <= 50 ? "text-green-400" : err <= 75 ? "text-blue-400" : err <= 110 ? "text-yellow-400" : "text-red-400";
         const gradeBg = err <= 50 ? "bg-green-500/10 border-green-500/30" : err <= 75 ? "bg-blue-500/10 border-blue-500/30" : err <= 110 ? "bg-yellow-500/10 border-yellow-500/30" : "bg-red-500/10 border-red-500/30";
-        const canProceed = err <= 150;
 
         return (
           <div className="bg-gray-900 rounded-2xl p-8 max-w-md mx-auto text-center shadow-2xl border border-gray-700">
@@ -518,31 +517,25 @@ export default function Calibration({
                 {err <= 75
                   ? "Kalibrasyon başarılı, analiz için hazır."
                   : err <= 110
-                  ? "Kabul edilebilir doğruluk. Daha iyi sonuç için tekrar deneyin."
-                  : "Düşük doğruluk. Tekrar kalibrasyon önerilir."}
+                  ? "Kabul edilebilir doğruluk. Daha iyi sonuç için tekrar deneyebilirsiniz."
+                  : "Düşük doğruluk. İsterseniz tekrar kalibre edebilir veya devam edebilirsiniz."}
               </p>
             </div>
 
             <div className="flex flex-col gap-3">
-              {canProceed && (
-                <button
-                  onClick={() => {
-                    handleSaveCalibration();
-                    handleComplete();
-                  }}
-                  className="w-full px-8 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg text-base"
-                >
-                  Analize Başla
-                </button>
-              )}
+              <button
+                onClick={() => {
+                  handleSaveCalibration();
+                  handleComplete();
+                }}
+                className="w-full px-8 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg text-base"
+              >
+                Analize Başla
+              </button>
 
               <button
                 onClick={handleRetry}
-                className={`w-full px-6 py-3 rounded-xl font-semibold transition ${
-                  canProceed
-                    ? "bg-gray-800 text-gray-300 hover:bg-gray-700 text-sm"
-                    : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg text-base"
-                }`}
+                className="w-full px-6 py-3 rounded-xl font-semibold transition bg-gray-800 text-gray-300 hover:bg-gray-700 text-sm"
               >
                 Tekrar Kalibre Et
               </button>

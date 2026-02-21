@@ -1,11 +1,11 @@
 # Göz Takip Analizi (Eye Tracking App)
 
-Web tabanlı göz takip ve dikkat analizi uygulaması. **1–10 fotoğraf** yükleyin; her biri 60 saniye gösterilir, webcam ile bakış noktalarınız kaydedilir. Her fotoğraf için ayrı **heatmap**, fixation analizi ve ROI kümeleme ile sonuçları inceleyin.
+Web tabanlı göz takip ve dikkat analizi uygulaması. **1–10 fotoğraf** yükleyin; her biri 20 saniye gösterilir, webcam ile bakış noktalarınız kaydedilir. Her fotoğraf için ayrı **heatmap**, fixation analizi ve ROI kümeleme ile sonuçları inceleyin.
 
 ## Özellikler
 
-- **21 noktalı kalibrasyon** – 16 kalibrasyon + 5 doğrulama noktası (4×4 grid + merkez/köşe) ile hassas haritalama
-- **1–10 fotoğraf, 60 saniye/foto** – 1 ile 10 arası görsel; her biri 60 sn gösterilir, otomatik geçiş; foto başına ayrı heatmap
+- **25+5 noktalı kalibrasyon** – 25 kalibrasyon (5×5 grid) + 5 doğrulama noktası ile hassas haritalama
+- **1–10 fotoğraf, 20 saniye/foto** – 1 ile 10 arası görsel; her biri 20 sn gösterilir, otomatik geçiş; foto başına ayrı heatmap
 - **Canlı göz takibi** – MediaPipe Face Mesh + İris ile webcam tabanlı bakış tahmini
 - **Polinom regresyon modeli** – Kalibrasyon verisiyle kişiye özel gaze modeli
 - **Fixation analizi** – I-VT (velocity threshold) ile fixation/saccade ayrımı, ilk bakış, süre metrikleri
@@ -37,10 +37,10 @@ Tarayıcıda [http://localhost:3000](http://localhost:3000) adresini açın.
 ## Kullanım
 
 1. **1–10 fotoğraf yükle** – Ana sayfada 1 ile 10 arası fotoğrafı sürükleyip bırakın veya tıklayıp çoklu seçin.
-2. **Analizi başlat** – "Analizi Başlat (N foto · 60 sn/foto)" ile oturumu başlatın.
+2. **Analizi başlat** – "Analizi Başlat (N foto · 20 sn/foto)" ile oturumu başlatın.
 3. **Kamera izni** – Webcam erişimine izin verin.
-4. **Kalibrasyon** – Ekrandaki 21 noktaya (16 + 5 doğrulama) sırayla sadece gözlerinizle bakın; başınızı sabit tutun. İsterseniz kayıtlı kalibrasyonu kullanabilirsiniz.
-5. **Takibi başlat** – "Takibi Başlat" ile ilk fotoğrafta 60 sn bakış kaydı alın; süre dolunca otomatik sonraki fotoğrafa geçilir.
+4. **Kalibrasyon** – Ekrandaki 25+5 noktaya sırayla sadece gözlerinizle bakın; başınızı sabit tutun. İsterseniz kayıtlı kalibrasyonu kullanabilirsiniz.
+5. **Takibi başlat** – "Takibi Başlat" ile ilk fotoğrafta 20 sn bakış kaydı alın; süre dolunca otomatik sonraki fotoğrafa geçilir.
 6. **Sonuçlar** – Tüm fotoğraflar bittikten sonra sonuç ekranında Foto 1…10 sekmeleriyle her fotoğrafın heatmap’ini, fixation ve ROI analizini inceleyin; heatmap’leri tek tek veya "Tüm 10 Heatmap İndir" ile indirin.
 
 ## Proje Yapısı

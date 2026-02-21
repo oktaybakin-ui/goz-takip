@@ -1,7 +1,7 @@
 /**
  * Kalibrasyon Modülü
  *
- * 9 noktalı kalibrasyon sistemi:
+ * 25 noktalı (5×5) kalibrasyon + 5 doğrulama noktası:
  * - Noktalar TAM EKRAN (viewport) üzerinde yayılır
  * - Stabilite kontrolü (baş hareketi, yüz tespiti, göz durumu)
  * - Doğrulama testi
