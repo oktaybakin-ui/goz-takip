@@ -2,20 +2,24 @@
  * Kalibrasyon Modülü
  *
  * 9 noktalı kalibrasyon sistemi:
- * - Nokta pozisyonları hesaplama
+ * - Noktalar TAM EKRAN (viewport) üzerinde yayılır
  * - Stabilite kontrolü (baş hareketi, yüz tespiti, göz durumu)
  * - Doğrulama testi
  * - Hata hesaplama
+ *
+ * NOT: Model ekran koordinatlarıyla eğitilir.
+ * Tracking sırasında tahminler görüntü koordinatlarına dönüştürülür.
  */
 
 import { EyeFeatures, CalibrationSample, GazeModel } from "./gazeModel";
+import { logger } from "./logger";
 
 export interface CalibrationPoint {
   id: number;
-  x: number; // Ekrandaki x (piksel)
-  y: number; // Ekrandaki y (piksel)
-  relX: number; // Görüntü üzerindeki oransal x (0-1)
-  relY: number; // Görüntü üzerindeki oransal y (0-1)
+  x: number; // Ekrandaki x (piksel - viewport)
+  y: number; // Ekrandaki y (piksel - viewport)
+  relX: number; // Oransal x (0-1)
+  relY: number; // Oransal y (0-1)
 }
 
 export interface CalibrationState {
@@ -42,71 +46,75 @@ export interface StabilityCheck {
   message: string | null;
 }
 
-// 9 noktalı kalibrasyon grid'i oluştur
+/**
+ * 25 noktalı (5×5) kalibrasyon grid'i – daha iyi ekran kapsamı, daha düşük hata.
+ */
 export function generateCalibrationPoints(
-  containerWidth: number,
-  containerHeight: number,
-  padding: number = 60
+  screenWidth: number,
+  screenHeight: number,
+  padding: number = 50
 ): CalibrationPoint[] {
   const points: CalibrationPoint[] = [];
-  const cols = 3;
-  const rows = 3;
-
+  let id = 0;
+  const cols = 5;
+  const rows = 5;
   for (let row = 0; row < rows; row++) {
     for (let col = 0; col < cols; col++) {
-      const relX = col / (cols - 1);
-      const relY = row / (rows - 1);
-      const x = padding + relX * (containerWidth - 2 * padding);
-      const y = padding + relY * (containerHeight - 2 * padding);
-
-      points.push({
-        id: row * cols + col,
-        x,
-        y,
-        relX,
-        relY,
-      });
+      const relX = cols > 1 ? col / (cols - 1) : 0.5;
+      const relY = rows > 1 ? row / (rows - 1) : 0.5;
+      const x = padding + relX * (screenWidth - 2 * padding);
+      const y = padding + relY * (screenHeight - 2 * padding);
+      points.push({ id: id++, x, y, relX, relY });
     }
   }
-
-  // Sırayı karıştır (daha iyi kalibrasyon için)
   return shuffleArray(points);
 }
 
-// 5 noktalı doğrulama grid'i oluştur (köşeler + merkez)
+/**
+ * 5 noktalı doğrulama noktaları (merkez + 4 köşe). Kalibrasyon sonrası hata ölçümü için kullanılır.
+ * @param screenWidth - Viewport genişliği (px)
+ * @param screenHeight - Viewport yüksekliği (px)
+ * @param padding - Kenar boşluğu (px)
+ * @returns Doğrulama noktaları
+ */
 export function generateValidationPoints(
-  containerWidth: number,
-  containerHeight: number,
-  padding: number = 80
+  screenWidth: number,
+  screenHeight: number,
+  padding: number = 100
 ): CalibrationPoint[] {
   const positions = [
     { relX: 0.5, relY: 0.5 },   // merkez
-    { relX: 0.25, relY: 0.25 },  // sol üst
-    { relX: 0.75, relY: 0.25 },  // sağ üst
-    { relX: 0.25, relY: 0.75 },  // sol alt
-    { relX: 0.75, relY: 0.75 },  // sağ alt
+    { relX: 0.2, relY: 0.2 },   // sol üst
+    { relX: 0.8, relY: 0.2 },   // sağ üst
+    { relX: 0.2, relY: 0.8 },   // sol alt
+    { relX: 0.8, relY: 0.8 },   // sağ alt
   ];
 
   return positions.map((pos, i) => ({
     id: i,
-    x: padding + pos.relX * (containerWidth - 2 * padding),
-    y: padding + pos.relY * (containerHeight - 2 * padding),
+    x: padding + pos.relX * (screenWidth - 2 * padding),
+    y: padding + pos.relY * (screenHeight - 2 * padding),
     relX: pos.relX,
     relY: pos.relY,
   }));
 }
 
-// Stabilite kontrolü
+/**
+ * Yüz/göz stabilitesi kontrolü. Kalibrasyon sırasında örnek alınmadan önce çağrılır.
+ * @param features - Güncel göz özellikleri
+ * @param prevFeatures - Önceki frame özellikleri (baş hareketi için)
+ * @param thresholds - Eşik değerleri (headMovement, minConfidence, minEyeOpenness)
+ * @returns Stabilite sonucu (headStable, faceVisible, eyesOpen, gazeOnTarget, message)
+ */
 export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: 0.05,     // yaw/pitch/roll değişim eşiği
-    minConfidence: 0.5,     // minimum yüz tespiti güveni
-    minEyeOpenness: 0.15,   // minimum göz açıklığı
+    headMovement: 0.072,
+    minConfidence: 0.45,
+    minEyeOpenness: 0.08,
   }
 ): StabilityCheck {
-  // Yüz görünürlüğü
   if (features.confidence < thresholds.minConfidence) {
     return {
       headStable: false,
@@ -128,15 +136,12 @@ export function checkStability(
     };
   }
 
-  // Baş hareketi kontrolü
-  if (prevFeatures) {
+  if (prevFeatures && prevFeatures.confidence > 0.3) {
     const yawDiff = Math.abs(features.yaw - prevFeatures.yaw);
     const pitchDiff = Math.abs(features.pitch - prevFeatures.pitch);
     const rollDiff = Math.abs(features.roll - prevFeatures.roll);
-
-    if (yawDiff > thresholds.headMovement ||
-        pitchDiff > thresholds.headMovement ||
-        rollDiff > thresholds.headMovement) {
+    const totalMovement = yawDiff + pitchDiff + rollDiff;
+    if (totalMovement > thresholds.headMovement) {
       return {
         headStable: false,
         faceVisible: true,
@@ -156,15 +161,30 @@ export function checkStability(
   };
 }
 
-// Kalibrasyon yöneticisi
+/**
+ * Kalibrasyon akışını yönetir: nokta üretimi, örnek toplama, doğrulama, hata hesaplama.
+ * State değişimleri onStateChange callback ile dışarı bildirilir.
+ */
 export class CalibrationManager {
   private model: GazeModel;
   private state: CalibrationState;
   private calibrationPoints: CalibrationPoint[] = [];
   private validationPoints: CalibrationPoint[] = [];
-  private samplesPerPointTarget: number = 45;
   private onStateChange: ((state: CalibrationState) => void) | null = null;
-  private errorThreshold: number = 80; // piksel
+  private errorThreshold: number = 85;
+  private settleFrames: number = 0;
+  private currentPointFrameCount: number = 0;
+  private detectedFPS: number = 30;
+  private recentIrisBuffer: { x: number; y: number }[] = [];
+  private readonly IRIS_BUFFER_SIZE = 20;
+  private readonly IRIS_STD_MAX = 0.018;
+  private readonly MIN_SAMPLES_PER_POINT = 30;
+  private readonly MIN_CONFIDENCE_CALIBRATION = 0.5;
+  private readonly RETRY_QUALITY_THRESHOLD = 15;
+  private pointQuality: Map<number, number> = new Map();
+  private retryQueue: number[] = [];
+  private retryAttempts: Map<number, number> = new Map();
+  private readonly MAX_RETRIES_PER_POINT = 2;
 
   constructor(model: GazeModel) {
     this.model = model;
@@ -175,7 +195,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: 9,
+      totalPoints: 25,
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,
@@ -202,10 +222,13 @@ export class CalibrationManager {
     return this.state;
   }
 
-  // Kalibrasyonu başlat
-  startCalibration(containerWidth: number, containerHeight: number): void {
-    this.calibrationPoints = generateCalibrationPoints(containerWidth, containerHeight);
-    this.validationPoints = generateValidationPoints(containerWidth, containerHeight);
+  // Kalibrasyonu başlat - TAM EKRAN boyutları kullanılır
+  startCalibration(screenWidth: number, screenHeight: number): void {
+    this.calibrationPoints = generateCalibrationPoints(screenWidth, screenHeight);
+    this.validationPoints = generateValidationPoints(screenWidth, screenHeight);
+
+    const diagonal = Math.sqrt(screenWidth ** 2 + screenHeight ** 2);
+    this.errorThreshold = Math.round(diagonal * 0.055);
 
     this.updateState({
       phase: "instructions",
@@ -222,38 +245,70 @@ export class CalibrationManager {
     });
   }
 
-  // Talimat ekranından kalibrasyon başlat
+  /** FPS bilgisini güncelle (kamera FPS'i) */
+  setFPS(fps: number): void {
+    this.detectedFPS = Math.max(15, Math.min(120, fps));
+    this.settleFrames = Math.round(this.detectedFPS * 1.5);
+    logger.log("[Calibration] FPS:", this.detectedFPS, "| Settle frames:", this.settleFrames);
+  }
+
   beginCalibrationPhase(): void {
+    this.currentPointFrameCount = 0;
+    this.recentIrisBuffer = [];
+    this.retryQueue = [];
+    this.retryAttempts.clear();
+    if (this.settleFrames === 0) {
+      this.settleFrames = Math.round(this.detectedFPS * 1.5);
+    }
     this.updateState({
       phase: "calibrating",
       countdown: 3,
       message: "Şimdi bu noktaya bak 👁️",
-      subMessage: "Başını sabit tut. Sadece gözlerin hareket etsin.",
+      subMessage: "Başını sabit tut. Noktaya baktığında gözünü de sabit tut.",
     });
   }
 
-  // Mevcut kalibrasyon noktasını al
   getCurrentPoint(): CalibrationPoint | null {
     if (this.state.currentPointIndex >= this.calibrationPoints.length) return null;
     return this.calibrationPoints[this.state.currentPointIndex];
   }
 
-  // Mevcut doğrulama noktasını al
   getCurrentValidationPoint(): CalibrationPoint | null {
     if (this.state.phase !== "validating") return null;
     if (this.state.currentPointIndex >= this.validationPoints.length) return null;
     return this.validationPoints[this.state.currentPointIndex];
   }
 
-  // Countdown güncelle
   updateCountdown(value: number): void {
     this.updateState({ countdown: value });
   }
 
-  // Kalibrasyon örneği ekle
   addSample(features: EyeFeatures): boolean {
     const point = this.getCurrentPoint();
     if (!point || this.state.phase !== "calibrating") return false;
+
+    this.currentPointFrameCount++;
+    if (this.currentPointFrameCount <= this.settleFrames) {
+      const settleProgress = (this.currentPointFrameCount / this.settleFrames) * 10;
+      this.updateState({ progress: settleProgress });
+      return false;
+    }
+
+    if (features.confidence < this.MIN_CONFIDENCE_CALIBRATION) return false;
+
+    const avgRelX = (features.leftIrisRelX + features.rightIrisRelX) / 2;
+    const avgRelY = (features.leftIrisRelY + features.rightIrisRelY) / 2;
+    this.recentIrisBuffer.push({ x: avgRelX, y: avgRelY });
+    if (this.recentIrisBuffer.length > this.IRIS_BUFFER_SIZE) this.recentIrisBuffer.shift();
+    if (this.recentIrisBuffer.length >= this.IRIS_BUFFER_SIZE) {
+      const meanX = this.recentIrisBuffer.reduce((s, p) => s + p.x, 0) / this.recentIrisBuffer.length;
+      const meanY = this.recentIrisBuffer.reduce((s, p) => s + p.y, 0) / this.recentIrisBuffer.length;
+      const varX = this.recentIrisBuffer.reduce((s, p) => s + (p.x - meanX) ** 2, 0) / this.recentIrisBuffer.length;
+      const varY = this.recentIrisBuffer.reduce((s, p) => s + (p.y - meanY) ** 2, 0) / this.recentIrisBuffer.length;
+      const stdX = Math.sqrt(varX);
+      const stdY = Math.sqrt(varY);
+      if (stdX > this.IRIS_STD_MAX || stdY > this.IRIS_STD_MAX) return false;
+    }
 
     const sample: CalibrationSample = {
       features,
@@ -266,21 +321,44 @@ export class CalibrationManager {
     this.state.samplesPerPoint.set(point.id, pointSamples);
     this.state.samples.push(sample);
 
-    // Nokta için yeterli örnek toplandı mı?
-    const progress = (pointSamples.length / this.samplesPerPointTarget) * 100;
-    this.updateState({
-      progress,
-    });
+    const progress = 10 + (pointSamples.length / this.MIN_SAMPLES_PER_POINT) * 90;
+    this.updateState({ progress: Math.min(100, progress) });
+    this.pointQuality.set(point.id, pointSamples.length);
 
-    return pointSamples.length >= this.samplesPerPointTarget;
+    return pointSamples.length >= this.MIN_SAMPLES_PER_POINT;
   }
 
-  // Sonraki noktaya geç
   nextPoint(): boolean {
+    const currentPoint = this.getCurrentPoint();
+    if (currentPoint) {
+      const quality = this.pointQuality.get(currentPoint.id) ?? 0;
+      const retries = this.retryAttempts.get(currentPoint.id) ?? 0;
+      if (quality < this.RETRY_QUALITY_THRESHOLD && retries < this.MAX_RETRIES_PER_POINT) {
+        logger.warn("[Calibration] Nokta", currentPoint.id, "düşük kalite:", quality, "sample → retry kuyruğuna eklendi");
+        this.retryQueue.push(this.state.currentPointIndex);
+        this.retryAttempts.set(currentPoint.id, retries + 1);
+      }
+    }
+
     const nextIndex = this.state.currentPointIndex + 1;
+    this.currentPointFrameCount = 0;
+    this.recentIrisBuffer = [];
 
     if (nextIndex >= this.calibrationPoints.length) {
-      // Kalibrasyon bitti, modeli eğit
+      if (this.retryQueue.length > 0) {
+        const retryIdx = this.retryQueue.shift()!;
+        const retryPoint = this.calibrationPoints[retryIdx];
+        logger.log("[Calibration] Retry: nokta", retryPoint.id, "(kalan retry:", this.retryQueue.length, ")");
+        this.updateState({
+          currentPointIndex: retryIdx,
+          progress: 0,
+          countdown: 3,
+          message: "Tekrar: bu noktaya bak 👁️",
+          subMessage: "Bu nokta için daha fazla veri gerekli. Lütfen odaklan.",
+          warning: null,
+        });
+        return true;
+      }
       this.trainModel();
       return false;
     }
@@ -290,19 +368,36 @@ export class CalibrationManager {
       progress: 0,
       countdown: 3,
       message: "Şimdi bu noktaya bak 👁️",
-      subMessage: "Başını sabit tut. Sadece gözlerin hareket etsin.",
+      subMessage: "Başını sabit tut. Noktaya baktığında gözünü de sabit tut.",
       warning: null,
     });
 
     return true;
   }
 
-  // Modeli eğit
   private trainModel(): void {
     try {
+      logger.log("[Calibration] Model eğitimi başlıyor. Toplam örnek:", this.state.samples.length);
+
+      // İlk birkaç örneğin feature'larını logla
+      if (this.state.samples.length > 0) {
+        const s0 = this.state.samples[0].features;
+        logger.log("[Calibration] İlk örnek features:", {
+          leftIrisRelX: s0.leftIrisRelX?.toFixed(3),
+          leftIrisRelY: s0.leftIrisRelY?.toFixed(3),
+          rightIrisRelX: s0.rightIrisRelX?.toFixed(3),
+          rightIrisRelY: s0.rightIrisRelY?.toFixed(3),
+          confidence: s0.confidence?.toFixed(2),
+          yaw: s0.yaw?.toFixed(3),
+          pitch: s0.pitch?.toFixed(3),
+        });
+      }
+
       const result = this.model.train(this.state.samples);
 
-      // Doğrulama aşamasına geç
+      logger.log("[Calibration] Eğitim tamamlandı. MeanError:", Math.round(result.meanError), "px, MaxError:", Math.round(result.maxError), "px");
+      logger.log("[Calibration] Model trained:", this.model.isTrained());
+
       this.updateState({
         phase: "validating",
         currentPointIndex: 0,
@@ -314,6 +409,7 @@ export class CalibrationManager {
         maxError: result.maxError,
       });
     } catch (error) {
+      logger.error("[Calibration] Eğitim HATASI:", error);
       this.updateState({
         phase: "failed",
         message: "Kalibrasyon başarısız oldu.",
@@ -322,8 +418,7 @@ export class CalibrationManager {
     }
   }
 
-  // Doğrulama örneği ekle ve hata hesapla
-  addValidationSample(features: EyeFeatures): { error: number } | null {
+  addValidationSample(features: EyeFeatures): { error: number; biasX: number; biasY: number } | null {
     const point = this.getCurrentValidationPoint();
     if (!point) return null;
 
@@ -333,11 +428,13 @@ export class CalibrationManager {
     const dx = prediction.x - point.x;
     const dy = prediction.y - point.y;
     const error = Math.sqrt(dx * dx + dy * dy);
+    // Sapma: hedef - tahmin (takip sırasında bu offset uygulanacak)
+    const biasX = point.x - prediction.x;
+    const biasY = point.y - prediction.y;
 
-    return { error };
+    return { error, biasX, biasY };
   }
 
-  // Doğrulama sonraki nokta
   nextValidationPoint(): boolean {
     const nextIndex = this.state.currentPointIndex + 1;
 
@@ -354,10 +451,8 @@ export class CalibrationManager {
     return true;
   }
 
-  // Doğrulamayı tamamla
-  completeValidation(meanError: number): void {
+  completeValidation(meanError: number, meanBiasX?: number, meanBiasY?: number): void {
     const passed = meanError <= this.errorThreshold;
-
     this.updateState({
       phase: "complete",
       meanError,
@@ -366,20 +461,23 @@ export class CalibrationManager {
         ? `Ortalama hata: ${Math.round(meanError)} px - Başarılı!`
         : `Ortalama hata: ${Math.round(meanError)} px - Doğruluk düşük. Tekrar önerilir.`,
     });
+    if (typeof meanBiasX === "number" && typeof meanBiasY === "number") {
+      this.model.setInitialDriftOffset(meanBiasX, meanBiasY);
+    }
   }
 
-  // Kalibrasyonu sıfırla
   reset(): void {
     this.state = this.createInitialState();
+    this.retryQueue = [];
+    this.retryAttempts.clear();
+    this.pointQuality.clear();
     this.onStateChange?.(this.state);
   }
 
-  // Uyarı göster
   setWarning(message: string | null): void {
     this.updateState({ warning: message });
   }
 
-  // Stabilite durumunu güncelle
   setStability(stable: boolean): void {
     this.updateState({ isStable: stable });
   }

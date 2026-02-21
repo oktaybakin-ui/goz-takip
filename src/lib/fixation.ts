@@ -60,6 +60,10 @@ export interface FixationMetrics {
   roiClusters: ROICluster[];
 }
 
+/**
+ * I-VT (Velocity Threshold) ile fixation/saccade tespiti ve FixationMetrics hesaplama.
+ * DBSCAN ile ROI clustering yapar.
+ */
 export class FixationDetector {
   // I-VT parametreleri
   private velocityThreshold: number; // piksel/saniye
@@ -80,15 +84,15 @@ export class FixationDetector {
   private currentFixationPoints: GazePoint[] = [];
   private isInFixation: boolean = false;
 
-  // Blink filtresi
-  private blinkThreshold: number = 50; // ms - çok kısa kayıplar blink
+  private lastValidTimestamp: number = 0;
+  private readonly BLINK_GAP_MS = 80;
 
   constructor(
-    velocityThreshold: number = 100,    // piksel/saniye
-    minFixationDuration: number = 150,   // ms
-    maxFixationRadius: number = 50,      // piksel
-    dbscanEps: number = 60,             // piksel
-    dbscanMinPts: number = 3
+    velocityThreshold: number = 50,     // piksel/saniye – mikrosakkad eşiği (eski: 82 çok yüksek)
+    minFixationDuration: number = 100,  // ms – kısa bakışları da say
+    maxFixationRadius: number = 38,    // piksel – daha hassas fixation sınırı
+    dbscanEps: number = 35,            // piksel – daha sıkı ROI kümeleri (eski: 50 çok geniş)
+    dbscanMinPts: number = 5           // Minimum nokta – gürültü azaltma (eski: 3 çok düşük)
   ) {
     this.velocityThreshold = velocityThreshold;
     this.minFixationDuration = minFixationDuration;
@@ -97,7 +101,7 @@ export class FixationDetector {
     this.dbscanMinPts = dbscanMinPts;
   }
 
-  // Tracking başlangıcı
+  /** Gaze listesini sıfırlar ve yeni oturum başlatır. */
   startTracking(): void {
     this.gazePoints = [];
     this.fixations = [];
@@ -107,12 +111,24 @@ export class FixationDetector {
     this.trackingStartTime = performance.now();
   }
 
-  // Yeni gaze noktası ekle ve anlık fixation kontrolü yap
+  /**
+   * Yeni bakış noktası ekler; I-VT ile fixation/saccade günceller.
+   * @param point - GazePoint (x, y, timestamp, confidence)
+   * @returns Tamamlanan fixation varsa onu döner, yoksa null
+   */
   addGazePoint(point: GazePoint): Fixation | null {
     this.gazePoints.push(point);
 
-    // Blink filtresi - düşük güvenli noktaları atla
     if (point.confidence < 0.3) return null;
+
+    if (this.lastValidTimestamp > 0) {
+      const gap = point.timestamp - this.lastValidTimestamp;
+      if (gap > this.BLINK_GAP_MS && gap < 400) {
+        this.lastValidTimestamp = point.timestamp;
+        return null;
+      }
+    }
+    this.lastValidTimestamp = point.timestamp;
 
     if (this.currentFixationPoints.length === 0) {
       this.currentFixationPoints.push(point);
@@ -131,7 +147,11 @@ export class FixationDetector {
     // Son noktadan hız hesapla
     const lastPoint = this.currentFixationPoints[this.currentFixationPoints.length - 1];
     const dt = (point.timestamp - lastPoint.timestamp) / 1000; // saniye
-    if (dt <= 0) return null;
+    // dt <= 0 veya çok küçükse (aynı frame veya zamanlama hatası) bu noktayı fixation'a ekle
+    if (dt <= 0.001) {
+      this.currentFixationPoints.push(point);
+      return null;
+    }
 
     const dx = point.x - lastPoint.x;
     const dy = point.y - lastPoint.y;
@@ -199,9 +219,11 @@ export class FixationDetector {
     return fixation;
   }
 
-  // Tracking bitir ve son fixation'ı da ekle
+  /** Tracking'i bitirir; son fixation finalize edilir. */
   stopTracking(): void {
     this.finalizeFixation();
+    this.currentFixationPoints = [];
+    this.isInFixation = false;
   }
 
   // DBSCAN kümeleme
@@ -309,7 +331,7 @@ export class FixationDetector {
     };
   }
 
-  // Tüm metrikleri hesapla
+  /** İlk bakış, TTFF, toplam süre, ROI kümeleri vb. tüm metrikleri döner. */
   getMetrics(): FixationMetrics {
     const allFixations = [...this.fixations];
     const sortedByTime = allFixations.sort((a, b) => a.startTime - b.startTime);
@@ -348,12 +370,12 @@ export class FixationDetector {
     };
   }
 
-  // Tüm gaze noktalarını al (heatmap için)
+  /** Toplanan tüm gaze noktalarını döner (heatmap vb. için). */
   getGazePoints(): GazePoint[] {
     return this.gazePoints;
   }
 
-  // Fixation listesini al
+  /** Tespit edilen fixation listesini döner. */
   getFixations(): Fixation[] {
     return this.fixations;
   }

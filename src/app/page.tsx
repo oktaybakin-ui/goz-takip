@@ -4,7 +4,6 @@ import React, { useState } from "react";
 import dynamic from "next/dynamic";
 import ImageUploader from "@/components/ImageUploader";
 
-// EyeTracker'ı client-side only olarak yükle (MediaPipe gerektiriyor)
 const EyeTracker = dynamic(() => import("@/components/EyeTracker"), {
   ssr: false,
   loading: () => (
@@ -18,19 +17,19 @@ const EyeTracker = dynamic(() => import("@/components/EyeTracker"), {
 });
 
 export default function HomePage() {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageUrls, setImageUrls] = useState<string[] | null>(null);
 
-  const handleImageSelected = (url: string) => {
-    setImageUrl(url);
+  const handleImagesSelected = (urls: string[]) => {
+    setImageUrls(urls);
   };
 
   const handleReset = () => {
-    setImageUrl(null);
+    setImageUrls(null);
   };
 
-  if (imageUrl) {
-    return <EyeTracker imageUrl={imageUrl} onReset={handleReset} />;
+  if (imageUrls && imageUrls.length >= 1) {
+    return <EyeTracker imageUrls={imageUrls} onReset={handleReset} />;
   }
 
-  return <ImageUploader onImageSelected={handleImageSelected} />;
+  return <ImageUploader onImagesSelected={handleImagesSelected} />;
 }
