@@ -110,6 +110,13 @@ export class FaceTracker {
   /** Kullanıcı manuel hizalama sonrası iris offset (normalize 0-1). Kalibrasyon öncesi isteğe bağlı adımda ayarlanır. */
   private irisOffsetLeft: { x: number; y: number } = { x: 0, y: 0 };
   private irisOffsetRight: { x: number; y: number } = { x: 0, y: 0 };
+  
+  // İris pozisyon geçmişi (stabilizasyon için)
+  private irisHistory: { 
+    leftX: number[], leftY: number[], 
+    rightX: number[], rightY: number[] 
+  } = { leftX: [], leftY: [], rightX: [], rightY: [] };
+  private readonly IRIS_HISTORY_SIZE = 5;
 
   constructor() {
     // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter
@@ -534,13 +541,43 @@ export class FaceTracker {
 
   private extractFeatures(landmarks: FaceLandmark[]): EyeFeatures {
     // Ham iris merkezi: 5 iris landmark'ının centroid'i
-    // Landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter yeterli
     const leftIrisRaw = this.getIrisCenter(landmarks, LEFT_EYE_INDICES);
     const rightIrisRaw = this.getIrisCenter(landmarks, RIGHT_EYE_INDICES);
+    
+    // İris pozisyon geçmişi güncelle
+    this.irisHistory.leftX.push(leftIrisRaw.x);
+    this.irisHistory.leftY.push(leftIrisRaw.y);
+    this.irisHistory.rightX.push(rightIrisRaw.x);
+    this.irisHistory.rightY.push(rightIrisRaw.y);
+    
+    // Geçmiş boyutunu sınırla
+    if (this.irisHistory.leftX.length > this.IRIS_HISTORY_SIZE) {
+      this.irisHistory.leftX.shift();
+      this.irisHistory.leftY.shift();
+      this.irisHistory.rightX.shift();
+      this.irisHistory.rightY.shift();
+    }
+    
+    // Median filtre ile stabilize et (outlier'lara karşı dayanıklı)
+    const getMedian = (arr: number[]) => {
+      const sorted = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(sorted.length / 2);
+      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    };
+    
+    const leftIrisStable = this.irisHistory.leftX.length >= 3 ? {
+      x: getMedian(this.irisHistory.leftX),
+      y: getMedian(this.irisHistory.leftY)
+    } : leftIrisRaw;
+    
+    const rightIrisStable = this.irisHistory.rightX.length >= 3 ? {
+      x: getMedian(this.irisHistory.rightX),
+      y: getMedian(this.irisHistory.rightY)
+    } : rightIrisRaw;
 
     // Kullanıcı manuel offset (kalibrasyon öncesi hizalama)
-    const leftIris = { x: leftIrisRaw.x + this.irisOffsetLeft.x, y: leftIrisRaw.y + this.irisOffsetLeft.y };
-    const rightIris = { x: rightIrisRaw.x + this.irisOffsetRight.x, y: rightIrisRaw.y + this.irisOffsetRight.y };
+    const leftIris = { x: leftIrisStable.x + this.irisOffsetLeft.x, y: leftIrisStable.y + this.irisOffsetLeft.y };
+    const rightIris = { x: rightIrisStable.x + this.irisOffsetRight.x, y: rightIrisStable.y + this.irisOffsetRight.y };
 
     // Göreceli iris pozisyonu (düzeltilmiş merkezden; göz konturu içinde 0-1)
     const leftRel = this.getRelativeIrisFromPoint(leftIris, landmarks, LEFT_EYE_INDICES);

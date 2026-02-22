@@ -182,13 +182,16 @@ export class CalibrationManager {
   private recentIrisBuffer: { x: number; y: number }[] = [];
   private readonly IRIS_BUFFER_SIZE = 15;
   private readonly IRIS_STD_MAX = 0.025;
-  private readonly MIN_SAMPLES_PER_POINT = 35;
-  private readonly MIN_CONFIDENCE_CALIBRATION = 0.40;
-  private readonly RETRY_QUALITY_THRESHOLD = 20;
+  private readonly MIN_SAMPLES_PER_POINT = 40; // 35'ten 40'a
+  private readonly MIN_CONFIDENCE_CALIBRATION = 0.45; // 0.40'tan 0.45'e
+  private readonly RETRY_QUALITY_THRESHOLD = 25; // 20'den 25'e (daha sıkı kalite)
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();
   private readonly MAX_RETRIES_PER_POINT = 2;
+  
+  // Bölgesel kalite haritası (ekranın hangi bölgelerinde hata yüksek)
+  private regionErrors: Map<string, number[]> = new Map();
 
   constructor(model: GazeModel) {
     this.model = model;

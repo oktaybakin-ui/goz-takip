@@ -252,6 +252,15 @@ export class OneEuroFilter {
     this.beta = beta;
     this.dCutoff = dCutoff;
   }
+  
+  // Hareket hızına göre parametreleri dinamik ayarla
+  setDynamicParams(velocity: number): void {
+    // Hız arttıkça minCutoff artır (daha az smoothing)
+    // Sabitken (velocity < 50px/s) daha fazla smoothing
+    const speedFactor = Math.min(velocity / 500, 1.0);
+    this.minCutoff = 1.0 + speedFactor * 3.0; // 1.0 - 4.0 arası
+    this.beta = 0.007 + speedFactor * 0.05; // 0.007 - 0.057 arası
+  }
 
   private alpha(cutoff: number, dt: number): number {
     const tau = 1.0 / (2 * Math.PI * cutoff);
@@ -677,10 +686,38 @@ export class GazeModel {
    * @returns GazePoint (x, y, timestamp, confidence) veya yetersiz veride null
    */
   predict(features: EyeFeatures): GazePoint | null {
+    // Blink detection: EAR çok düşükse göz kapalı
+    const avgEAR = (features.leftEAR + features.rightEAR) / 2;
+    if (avgEAR < 0.18) {
+      // Göz kapalı, takip yapma
+      return null;
+    }
+    
+    // Confidence çok düşükse atla
+    if (features.confidence < 0.3) {
+      return null;
+    }
+    
     const raw = this.predictRaw(features);
     if (!raw) return null;
 
     const now = performance.now();
+
+    // Hız hesapla (adaptive smoothing için)
+    let velocity = 0;
+    if (this.predictionHistory.length > 0) {
+      const last = this.predictionHistory[this.predictionHistory.length - 1];
+      const dx = raw.x - last.x;
+      const dy = raw.y - last.y;
+      const dt = (now - last.t) / 1000; // saniye
+      if (dt > 0) {
+        velocity = Math.sqrt(dx * dx + dy * dy) / dt; // px/s
+      }
+    }
+    
+    // Hareket hızına göre filter parametrelerini ayarla
+    this.filterX.setDynamicParams(velocity);
+    this.filterY.setDynamicParams(velocity);
 
     // Affine veya drift correction uygula
     let correctedX: number;
