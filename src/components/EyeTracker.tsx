@@ -285,6 +285,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     };
   }, []);
 
+  // pupil_align'dan sonra calibration/tracking'de gizli videoyu tekrar FaceTracker'a bağla
+  useEffect(() => {
+    if ((phase === "calibration" || phase === "tracking") && videoRef.current && faceTrackerRef.current.getStream()) {
+      const v = videoRef.current;
+      v.srcObject = faceTrackerRef.current.getStream();
+      v.play().catch(() => {});
+      faceTrackerRef.current.setVideoElement(v);
+    }
+  }, [phase]);
+
   // 20 saniye dolunca sonraki fotoğrafa geç (çoklu foto modu)
   useEffect(() => {
     if (!isMultiImage || !isTracking || trackingDuration < IMAGE_DURATION_MS || advancingRef.current) return;
@@ -827,17 +837,26 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
   return (
     <div className="relative flex flex-col items-center w-full min-h-screen bg-gray-950 p-4">
-      {/* Gizli video elementi */}
-      <video
-        ref={videoRef}
-        className="absolute opacity-0 pointer-events-none"
-        style={{ position: "fixed", top: -9999, left: -9999 }}
-        width={960}
-        height={720}
-        playsInline
-        muted
-        autoPlay
-      />
+      {/* Gizli video: pupil_align dışında kullanılır; pupil_align'da video PupilAlignStep içinde gösteriliyor (tek video) */}
+      {phase !== "pupil_align" && (
+        <video
+          ref={videoRef}
+          className="absolute opacity-0 pointer-events-none"
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: 64,
+            height: 48,
+            zIndex: -1,
+          }}
+          width={960}
+          height={720}
+          playsInline
+          muted
+          autoPlay
+        />
+      )}
 
       {/* Hata mesajı */}
       {error && (
@@ -876,10 +895,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         </div>
       )}
 
-      {/* İsteğe bağlı: göz bebeği hizalama (kalibrasyon öncesi) */}
+      {/* İsteğe bağlı: göz bebeği hizalama — tek video kullanılıyor (FaceTracker bu videodan frame alır, yüz tespiti çalışır) */}
       {phase === "pupil_align" && (
         <PupilAlignStep
           faceTracker={faceTrackerRef.current}
+          videoRef={videoRef}
           onSkip={() => setPhase("calibration")}
           onDone={(left, right) => {
             faceTrackerRef.current.setIrisOffset(left, right);

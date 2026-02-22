@@ -897,6 +897,14 @@ export class FaceTracker {
   }
 
   /**
+   * Frame okumak için kullanılan video öğesini değiştir.
+   * Göz bebeği hizalama ekranında gösterilen video ile aynı öğeyi kullanmak için çağrılır (tarayıcı throttling önlenir).
+   */
+  setVideoElement(el: HTMLVideoElement | null): void {
+    this.videoElement = el;
+  }
+
+  /**
    * Kalibrasyon öncesi manuel göz bebeği hizalama sonrası offset (normalize 0-1).
    * Sol/sağ iris tespitine eklenecek: corrected = detected + offset.
    */

@@ -6,6 +6,8 @@ import { useLang } from "@/contexts/LangContext";
 
 interface PupilAlignStepProps {
   faceTracker: FaceTracker;
+  /** Parent'tan verilirse FaceTracker bu videodan frame alır (tek video = tarayıcı throttling olmaz) */
+  videoRef?: React.RefObject<HTMLVideoElement | null>;
   onSkip: () => void;
   onDone: (offsetLeft: { x: number; y: number }, offsetRight: { x: number; y: number }) => void;
 }
@@ -13,10 +15,11 @@ interface PupilAlignStepProps {
 const DOT_RADIUS = 12;
 const HIT_RADIUS = 24;
 
-export default function PupilAlignStep({ faceTracker, onSkip, onDone }: PupilAlignStepProps) {
+export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, onSkip, onDone }: PupilAlignStepProps) {
   const { t } = useLang();
   const containerRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const ownVideoRef = useRef<HTMLVideoElement>(null);
+  const videoRef = parentVideoRef ?? ownVideoRef;
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [videoSize, setVideoSize] = useState({ w: 640, h: 480 });
   const [dragging, setDragging] = useState<"left" | "right" | null>(null);
@@ -25,13 +28,14 @@ export default function PupilAlignStep({ faceTracker, onSkip, onDone }: PupilAli
   const leftCorrectedRef = useRef<{ x: number; y: number } | null>(null);
   const rightCorrectedRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Stream'i videoya bağla
+  // Stream'i videoya bağla; parent videoRef varsa FaceTracker'ı da bu videoya geçir (tek video = yüz tespiti çalışır)
   useEffect(() => {
     const stream = faceTracker.getStream();
     const video = videoRef.current;
     if (video && stream) {
       video.srcObject = stream;
       video.play().catch(() => {});
+      if (parentVideoRef) faceTracker.setVideoElement(video);
       const onResize = () => {
         if (video.videoWidth && video.videoHeight) {
           setVideoSize({ w: video.videoWidth, h: video.videoHeight });
@@ -39,9 +43,12 @@ export default function PupilAlignStep({ faceTracker, onSkip, onDone }: PupilAli
       };
       video.addEventListener("loadedmetadata", onResize);
       if (video.videoWidth) onResize();
-      return () => video.removeEventListener("loadedmetadata", onResize);
+      return () => {
+        video.removeEventListener("loadedmetadata", onResize);
+        if (parentVideoRef) faceTracker.setVideoElement(null);
+      };
     }
-  }, [faceTracker]);
+  }, [faceTracker, parentVideoRef]);
 
   // Overlay çizimi (tespit edilen veya kullanıcı düzeltmesi)
   const draw = useCallback(() => {
@@ -219,15 +226,15 @@ export default function PupilAlignStep({ faceTracker, onSkip, onDone }: PupilAli
           />
         </div>
 
-        {!faceDetected && waitingFrames > 60 && (
+        {!faceDetected && waitingFrames > 90 && (
           <div className="mt-3 bg-yellow-900/30 border border-yellow-600/50 rounded-lg px-4 py-2 text-yellow-300 text-sm text-center">
-            Göz takip modeli yükleniyor veya yüz tespit edilemiyor. Kameranızın açık olduğundan ve yüzünüzün görünür olduğundan emin olun.
+            Göz takip modeli yükleniyor veya yüz tespit edilemiyor. Kameranızın açık olduğundan ve yüzünüzün görünür olduğundan emin olun. Gözlük kullanıyorsanız ışığın camda yansımadığından, yüzünüzün yeterince aydınlık olduğundan emin olun.
           </div>
         )}
         {faceDetected && (
           <p className="mt-2 text-green-400 text-xs text-center">✓ Yüz tespit edildi — noktaları sürükleyerek göz bebeklerinize hizalayın</p>
         )}
-        {!faceDetected && waitingFrames <= 60 && (
+        {!faceDetected && waitingFrames <= 90 && (
           <p className="mt-2 text-gray-500 text-xs text-center animate-pulse">Göz takip modeli başlatılıyor...</p>
         )}
         <p className="text-gray-500 text-xs mt-1 text-center">{t.pupilAlignHint}</p>
