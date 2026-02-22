@@ -99,10 +99,34 @@ export default function Calibration({
     }, 1000);
   }, []);
 
-  // Kalibrasyon veri toplama döngüsü
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
+    const pointStartTime = Date.now();
+    const POINT_TIMEOUT_MS = 12000;
+
+    const advanceToNext = () => {
+      samplingRef.current = false;
+      const hasMore = manager.nextPoint();
+      if (hasMore) {
+        startPointCollection(manager, false);
+      } else {
+        logger.log("[Calibration] Kalibrasyon tamamlandı, doğrulama başlıyor");
+        phaseRef.current = "validating";
+        validationErrorsRef.current = [];
+        validationBiasesRef.current = [];
+        affinePointsRef.current = [];
+        startPointCollection(manager, true);
+      }
+    };
+
     const sampleLoop = () => {
       if (!samplingRef.current) return;
+
+      // Nokta başına zaman aşımı — takılmayı önle
+      if (Date.now() - pointStartTime > POINT_TIMEOUT_MS) {
+        logger.warn("[Calibration] Nokta zaman aşımı, sonrakine geçiliyor");
+        advanceToNext();
+        return;
+      }
 
       const features = faceTracker.getLastFeatures();
       if (!features) {
@@ -126,19 +150,7 @@ export default function Calibration({
       setSampleProgress(managerState.progress);
 
       if (isComplete) {
-        samplingRef.current = false;
-
-        const hasMore = manager.nextPoint();
-        if (hasMore) {
-          startPointCollection(manager, false);
-        } else {
-          logger.log("[Calibration] Kalibrasyon tamamlandı, doğrulama başlıyor");
-          phaseRef.current = "validating";
-          validationErrorsRef.current = [];
-          validationBiasesRef.current = [];
-          affinePointsRef.current = [];
-          startPointCollection(manager, true);
-        }
+        advanceToNext();
         return;
       }
 

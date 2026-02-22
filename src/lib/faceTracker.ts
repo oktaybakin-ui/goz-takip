@@ -217,19 +217,17 @@ export class FaceTracker {
       }
     });
 
-    // Modelin ilk yüklenmesini tetikle - boş bir frame ile
-    // Bu WASM dosyalarının indirilmesini sağlar
+    // Modelin ilk yüklenmesini tetikle — warm-up frame ile WASM indirilir
     logger.log("[FaceTracker] FaceMesh modeli yükleniyor...");
     try {
       if (this.videoElement && this.videoElement.readyState >= 2) {
         await this.faceMesh.send({ image: this.videoElement });
       }
     } catch (e) {
-      logger.warn("[FaceTracker] İlk frame gönderimi başarısız (normal):", e);
-      this.isModelReady = false;
-      return;
+      logger.warn("[FaceTracker] İlk frame gönderimi başarısız (devam ediliyor):", e);
     }
 
+    // Warm-up başarısız olsa bile model hazır — processFrame döngüsünde tekrar denenir
     this.isModelReady = true;
     logger.log("[FaceTracker] FaceMesh modeli hazır");
   }

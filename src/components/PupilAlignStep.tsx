@@ -59,7 +59,7 @@ export default function PupilAlignStep({ faceTracker, onSkip, onDone }: PupilAli
 
     ctx.clearRect(0, 0, w, h);
     const features = faceTracker.getLastFeatures();
-    if (!features || features.confidence < 0.2) return;
+    if (!features || features.confidence < 0.05) return;
 
     const leftX = features.leftIrisX * w;
     const leftY = features.leftIrisY * h;
