@@ -78,7 +78,7 @@ export class AutoRecalibration {
   registerFixation(fixation: Fixation, features: EyeFeatures): void {
     // Only consider confident, long fixations
     if (fixation.duration < this.config.minFixationDuration || 
-        fixation.confidence < this.config.minConfidence) {
+        fixation.avgConfidence < this.config.minConfidence) {
       return;
     }
     
