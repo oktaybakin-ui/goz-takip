@@ -57,8 +57,8 @@ export function generateCalibrationPoints(
 ): CalibrationPoint[] {
   const points: CalibrationPoint[] = [];
   let id = 0;
-  const cols = 5;
-  const rows = 5;
+  const cols = 7;  // 5'ten 7'ye çıkardık
+  const rows = 7;  // 5'ten 7'ye çıkardık (toplam 49 nokta)
   for (let row = 0; row < rows; row++) {
     const isEvenRow = row % 2 === 0;
     for (let ci = 0; ci < cols; ci++) {
@@ -199,7 +199,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: 25,
+      totalPoints: 49,  // 25'ten 49'a çıkardık (7x7 grid)
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,

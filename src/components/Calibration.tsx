@@ -77,7 +77,7 @@ export default function Calibration({
     setSampleProgress(0);
     samplingRef.current = false;
 
-    let count = 2;
+    let count = 1;  // 2'den 1'e düşürüldü (daha hızlı kalibrasyon)
     setCountdown(count);
 
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);

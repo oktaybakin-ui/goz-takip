@@ -136,7 +136,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   imageNatDimsRef.current = imageNaturalDimensions;
 
   const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
-  if (!modelRef.current) modelRef.current = new GazeModel(0.03);
+  if (!modelRef.current) modelRef.current = new GazeModel(0.08);  // Smoothing artırıldı (0.03 → 0.08)
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
