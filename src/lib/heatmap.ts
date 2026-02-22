@@ -47,11 +47,24 @@ export class HeatmapGenerator {
   private gradientCanvas: HTMLCanvasElement | null = null;
   private gradientCtx: CanvasRenderingContext2D | null = null;
 
-  /** @param config - radius, blur, gradient, useFixations vb. (varsayılanlar DEFAULT_CONFIG ile doldurulur) */
+  private canvasCache = new Map<string, HTMLCanvasElement>();
+
   constructor(config: Partial<HeatmapConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
-    // createGradientPalette() burada çağrılmaz!
-    // İlk render() veya exportToPNG() çağrısında lazy olarak oluşturulur.
+  }
+
+  private getOrCreateCanvas(key: string, w: number, h: number): HTMLCanvasElement {
+    let c = this.canvasCache.get(key);
+    if (!c || c.width !== w || c.height !== h) {
+      c = document.createElement("canvas");
+      c.width = w;
+      c.height = h;
+      this.canvasCache.set(key, c);
+    } else {
+      const ctx = c.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, w, h);
+    }
+    return c;
   }
 
   private ensureGradientPalette(): boolean {
@@ -99,26 +112,22 @@ export class HeatmapGenerator {
     canvas.width = imageWidth;
     canvas.height = imageHeight;
 
-    // 1. Yoğunluk haritası oluştur (grayscale alpha)
-    const intensityCanvas = document.createElement("canvas");
-    intensityCanvas.width = imageWidth;
-    intensityCanvas.height = imageHeight;
-    const intensityCtx = intensityCanvas.getContext("2d")!;
+    const intensityCanvas = this.getOrCreateCanvas("intensity", imageWidth, imageHeight);
+    const intensityCtx = intensityCanvas.getContext("2d");
+    if (!intensityCtx) return;
 
     if (this.config.useFixations && fixations.length > 0) {
-      this.renderFixationHeatmap(intensityCtx, fixations, imageWidth, imageHeight);
+      this.renderFixationHeatmap(intensityCtx, fixations);
     } else if (points.length > 0) {
-      this.renderGazeHeatmap(intensityCtx, points, imageWidth, imageHeight);
+      this.renderGazeHeatmap(intensityCtx, points);
     } else {
       ctx.clearRect(0, 0, imageWidth, imageHeight);
       return;
     }
 
-    // 2. Gaussian blur uygula (canvas filter)
-    const blurredCanvas = document.createElement("canvas");
-    blurredCanvas.width = imageWidth;
-    blurredCanvas.height = imageHeight;
-    const blurredCtx = blurredCanvas.getContext("2d")!;
+    const blurredCanvas = this.getOrCreateCanvas("blurred", imageWidth, imageHeight);
+    const blurredCtx = blurredCanvas.getContext("2d");
+    if (!blurredCtx) return;
 
     const supportsFilter = "filter" in blurredCtx;
     if (supportsFilter) {
@@ -135,9 +144,7 @@ export class HeatmapGenerator {
 
   private renderFixationHeatmap(
     ctx: CanvasRenderingContext2D,
-    fixations: Fixation[],
-    width: number,
-    height: number
+    fixations: Fixation[]
   ): void {
     if (fixations.length === 0) return;
 
@@ -179,9 +186,7 @@ export class HeatmapGenerator {
 
   private renderGazeHeatmap(
     ctx: CanvasRenderingContext2D,
-    points: GazePoint[],
-    width: number,
-    height: number
+    points: GazePoint[]
   ): void {
     const radius = this.config.radius * 0.7;
 

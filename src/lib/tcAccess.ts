@@ -6,15 +6,30 @@
 const STORAGE_KEY_USED = "eye-tracking-used-tc";
 const MAX_STORED = 5000; // Eski kayıtları taşmada silmek için
 
-function getAdminTC(): string | null {
-  if (typeof window === "undefined") return null;
-  return process.env.NEXT_PUBLIC_ADMIN_TC ?? null;
+async function hashTC(tc: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(tc.replace(/\s/g, ""));
+  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
-export function isAdminTC(tc: string): boolean {
-  const admin = getAdminTC();
-  if (!admin) return false;
-  return tc.replace(/\s/g, "") === admin.replace(/\s/g, "");
+let adminHashCache: string | null = null;
+
+function getAdminHash(): string | null {
+  if (typeof window === "undefined") return null;
+  return process.env.NEXT_PUBLIC_ADMIN_TC_HASH ?? null;
+}
+
+export async function isAdminTC(tc: string): Promise<boolean> {
+  const storedHash = getAdminHash();
+  if (!storedHash) return false;
+  if (!adminHashCache) {
+    adminHashCache = storedHash;
+  }
+  const inputHash = await hashTC(tc);
+  return inputHash === adminHashCache;
 }
 
 function getUsedTCs(): string[] {
@@ -46,20 +61,18 @@ export function hasAlreadyUsed(tc: string): boolean {
   return used.includes(normalized);
 }
 
-/** TC giriş yapabilir mi? Admin sınırsız; diğerleri sadece ilk kez. */
-export function canAccessWithTC(tc: string): { allowed: boolean; reason?: string } {
+export async function canAccessWithTC(tc: string): Promise<{ allowed: boolean; reason?: string }> {
   const normalized = tc.replace(/\s/g, "");
-  if (isAdminTC(normalized)) return { allowed: true };
+  if (await isAdminTC(normalized)) return { allowed: true };
   if (hasAlreadyUsed(normalized)) {
     return { allowed: false, reason: "already_used" };
   }
   return { allowed: true };
 }
 
-/** Girişi kaydet (bu TC ile baktı olarak işaretle). Admin için kaydetme. */
-export function markTCAsUsed(tc: string): void {
+export async function markTCAsUsed(tc: string): Promise<void> {
   const normalized = tc.replace(/\s/g, "");
-  if (isAdminTC(normalized)) return;
+  if (await isAdminTC(normalized)) return;
   const used = getUsedTCs();
   if (used.includes(normalized)) return;
   setUsedTCs([...used, normalized]);

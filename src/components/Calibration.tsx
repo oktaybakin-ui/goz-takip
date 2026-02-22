@@ -59,6 +59,9 @@ export default function Calibration({
     };
   }, []);
 
+  const startCalibrationSamplingRef = useRef<(manager: CalibrationManager) => void>(() => {});
+  const startValidationSamplingRef = useRef<(manager: CalibrationManager) => void>(() => {});
+
   // Veri toplama başlat (bir kalibrasyon noktası için)
   const startPointCollection = useCallback((manager: CalibrationManager, isValidation: boolean) => {
     const point = isValidation
@@ -73,7 +76,6 @@ export default function Calibration({
     setSampleProgress(0);
     samplingRef.current = false;
 
-    // Geri sayım (2 saniye - daha hızlı kalibrasyon)
     let count = 2;
     setCountdown(count);
 
@@ -88,13 +90,13 @@ export default function Calibration({
         samplingRef.current = true;
 
         if (isValidation) {
-          startValidationSampling(manager);
+          startValidationSamplingRef.current(manager);
         } else {
-          startCalibrationSampling(manager);
+          startCalibrationSamplingRef.current(manager);
         }
       }
     }, 1000);
-  }, [faceTracker]);
+  }, []);
 
   // Kalibrasyon veri toplama döngüsü
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
@@ -107,7 +109,6 @@ export default function Calibration({
         return;
       }
 
-      // Stabilite kontrolü
       const stability = checkStability(features, prevFeaturesRef.current);
       prevFeaturesRef.current = features;
 
@@ -119,7 +120,6 @@ export default function Calibration({
 
       setWarning(null);
 
-      // Örnek ekle
       const isComplete = manager.addSample(features);
       const managerState = manager.getState();
       setSampleProgress(managerState.progress);
@@ -127,12 +127,10 @@ export default function Calibration({
       if (isComplete) {
         samplingRef.current = false;
 
-        // Sonraki noktaya geç
         const hasMore = manager.nextPoint();
         if (hasMore) {
           startPointCollection(manager, false);
         } else {
-          // Kalibrasyon bitti → doğrulama başlat
           logger.log("[Calibration] Kalibrasyon tamamlandı, doğrulama başlıyor");
           phaseRef.current = "validating";
           validationErrorsRef.current = [];
@@ -148,7 +146,9 @@ export default function Calibration({
     animFrameRef.current = requestAnimationFrame(sampleLoop);
   }, [faceTracker, startPointCollection]);
 
-  // Doğrulama veri toplama döngüsü – hata + sapma (bias) toplanır; takılmaması için zaman aşımı ve daha düşük eşik
+  startCalibrationSamplingRef.current = startCalibrationSampling;
+
+  // Doğrulama veri toplama döngüsü
   const startValidationSampling = useCallback((manager: CalibrationManager) => {
     const errors: number[] = [];
     let sampleCount = 0;
@@ -242,6 +242,8 @@ export default function Calibration({
       : null;
     animFrameRef.current = requestAnimationFrame(validationLoop);
   }, [faceTracker, startPointCollection]);
+
+  startValidationSamplingRef.current = startValidationSampling;
 
   // Manager oluştur ve kalibrasyonu başlat
   useEffect(() => {

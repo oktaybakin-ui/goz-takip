@@ -45,7 +45,8 @@ export default function ResultsPanel({
   const [exportingHeatmapIndex, setExportingHeatmapIndex] = useState<number | null>(null);
   const { t } = useLang();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const heatmapGeneratorRef = useRef<HeatmapGenerator>(new HeatmapGenerator());
+  const heatmapGeneratorRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
+  if (!heatmapGeneratorRef.current) heatmapGeneratorRef.current = new HeatmapGenerator();
 
   const metrics = isMulti ? (resultsPerImage![selectedPhotoIndex]?.metrics ?? null) : (metricsProp ?? null);
   const gazePoints = isMulti ? (resultsPerImage![selectedPhotoIndex]?.gazePoints ?? []) : (gazePointsProp ?? []);
@@ -57,8 +58,14 @@ export default function ResultsPanel({
     return computeQualityMetrics(gazePoints, imageDimensions, IMAGE_DURATION_MS);
   }, [gazePoints, imageDimensions]);
 
+  const downloadTimersRef = useRef<NodeJS.Timeout[]>([]);
+
   useEffect(() => {
     setHasStored(hasStoredCalibration());
+    return () => {
+      downloadTimersRef.current.forEach(clearTimeout);
+      downloadTimersRef.current = [];
+    };
   }, []);
 
   useEffect(() => {
@@ -206,7 +213,7 @@ export default function ResultsPanel({
   const handleCSVExport = () => {
     if (isMulti && resultsPerImage) {
       resultsPerImage.forEach((r, i) => {
-        const csv = exportCSV(r.gazePoints, r.fixations, i);
+        const csv = exportCSV(r.gazePoints, r.fixations);
         downloadCSV(csv, `goz-takip-foto-${i + 1}.csv`);
       });
     } else {
@@ -448,7 +455,12 @@ export default function ResultsPanel({
                   {exportingHeatmapIndex === selectedPhotoIndex ? "Dışa aktarılıyor..." : `Heatmap PNG (Foto ${selectedPhotoIndex + 1})`}
                 </button>
                 <button
-                  onClick={() => resultsPerImage!.forEach((_, i) => setTimeout(() => handleExportHeatmapForPhoto(i), i * 500))}
+                  onClick={() => {
+                    downloadTimersRef.current.forEach(clearTimeout);
+                    downloadTimersRef.current = resultsPerImage!.map((_, i) =>
+                      setTimeout(() => handleExportHeatmapForPhoto(i), i * 500)
+                    );
+                  }}
                   disabled={exportingHeatmapIndex !== null}
                   className="w-full px-4 py-2 bg-gray-800 text-gray-400 rounded-xl text-xs hover:bg-gray-700 disabled:opacity-50 transition"
                 >

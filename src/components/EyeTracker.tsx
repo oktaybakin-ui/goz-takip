@@ -106,15 +106,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [, setFps] = useState(0);
-  const [, setEyeZoomActive] = useState(false);
   const [gazePoint, setGazePoint] = useState<GazePoint | null>(null);
   const [fixations, setFixations] = useState<Fixation[]>([]);
   const [metrics, setMetrics] = useState<FixationMetrics | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
-  const [flipGazeX] = useState(false);
-  const [flipGazeY] = useState(false);
-  const [userOffset] = useState<{ x: number; y: number } | null>(null);
   const [isTracking, setIsTracking] = useState(false);
   const [trackingDuration, setTrackingDuration] = useState(0);
   const [calibrationError, setCalibrationError] = useState<number>(0);
@@ -124,6 +119,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const [cameraStatus, setCameraStatus] = useState<string>("Bekleniyor...");
   const [resultsPerImage, setResultsPerImage] = useState<ResultPerImage[]>([]);
   const [showTransitionOverlay, setShowTransitionOverlay] = useState(false);
+  const transitionPhotoNumRef = useRef(0);
   const [resizeWarning, setResizeWarning] = useState(false);
   const calibratedScreenSize = useRef<{ w: number; h: number } | null>(null);
   const { t } = useLang();
@@ -139,10 +135,14 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const imageNatDimsRef = useRef(imageNaturalDimensions);
   imageNatDimsRef.current = imageNaturalDimensions;
 
-  const modelRef = useRef<GazeModel>(new GazeModel(0.03, 0.4));
-  const faceTrackerRef = useRef<FaceTracker>(new FaceTracker());
-  const fixationDetectorRef = useRef<FixationDetector>(new FixationDetector());
-  const heatmapRef = useRef<HeatmapGenerator>(new HeatmapGenerator());
+  const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
+  if (!modelRef.current) modelRef.current = new GazeModel(0.03);
+  const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
+  if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
+  const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
+  if (!fixationDetectorRef.current) fixationDetectorRef.current = new FixationDetector();
+  const heatmapRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
+  if (!heatmapRef.current) heatmapRef.current = new HeatmapGenerator();
   const trackingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gazePointsRef = useRef<GazePoint[]>([]);
   const drawAnimRef = useRef<number>(0);
@@ -169,23 +169,31 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     }
   }, [imageCount]);
 
-  // Tüm görüntüleri önceden yükle
+  // Tüm görüntüleri önceden yükle (data URL'ler büyük olabilir - ref'te tut, cleanup'ta temizle)
+  const preloadImagesRef = useRef<HTMLImageElement[]>([]);
   useEffect(() => {
-    imageUrls.forEach((url) => {
+    const imgs = imageUrls.map((url) => {
       const img = new Image();
       img.src = url;
+      return img;
     });
+    preloadImagesRef.current = imgs;
+    return () => {
+      imgs.forEach((img) => { img.src = ""; });
+      preloadImagesRef.current = [];
+    };
   }, [imageUrls]);
 
   // Görüntüyü yükle (mevcut indekse göre)
   useEffect(() => {
+    let cancelled = false;
     setImageLoaded(false);
     const img = new Image();
     img.onload = () => {
+      if (cancelled) return;
       imageRef.current = img;
       setImageLoaded(true);
       setImageNaturalDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-      // Fotoğraf büyük görünsün: ekranın büyük kısmını kullan, küçük kırpılmış foto da büyütülebilsin
       const maxW = Math.min(window.innerWidth * 0.92, 1400);
       const maxH = Math.min(window.innerHeight * 0.82, 950);
       const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
@@ -199,9 +207,15 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       }
     };
     img.onerror = () => {
+      if (cancelled) return;
       setError("Görüntü yüklenemedi.");
     };
     img.src = currentImageUrl;
+    return () => {
+      cancelled = true;
+      img.onload = null;
+      img.onerror = null;
+    };
   }, [currentImageUrl, currentImageIndex, isMultiImage]);
 
   const cameraInitializedRef = useRef(false);
@@ -307,7 +321,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       setTrackingDuration((prev) => prev + 100);
     }, 100);
 
-    // State güncellemelerini toplu yap
+    transitionPhotoNumRef.current = idx + 1;
     setFixations([]);
     setMetrics(null);
     setTrackingDuration(0);
@@ -406,22 +420,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         return;
       }
 
-      // Kullanıcı ayarı: tahmin eksenlerini ters çevir (kamera/ayna farkı için)
-      const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
-      const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
-      if (flipGazeX) screenPoint = { ...screenPoint, x: vw - screenPoint.x };
-      if (flipGazeY) screenPoint = { ...screenPoint, y: vh - screenPoint.y };
-
       lastRawScreenPointRef.current = { x: screenPoint.x, y: screenPoint.y };
-      if (userOffset) {
-        // "Buraya bakıyorum" sonrası solda kalma düzeltmesi: noktayı hafif sağa kaydır
-        const USER_OFFSET_BIAS_PX = 22;
-        screenPoint = {
-          ...screenPoint,
-          x: screenPoint.x + userOffset.x + USER_OFFSET_BIAS_PX,
-          y: screenPoint.y + userOffset.y,
-        };
-      }
 
       const dims = imageDimsRef.current;
       const natDims = imageNatDimsRef.current;
@@ -517,11 +516,9 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       if (now - lastUiUpdateRef.current >= GAZE_UI_THROTTLE_MS) {
         lastUiUpdateRef.current = now;
         setGazePoint(point);
-        setFps(faceTrackerRef.current.getFPS());
-        setEyeZoomActive(faceTrackerRef.current.getLastFrameUsedZoom());
       }
     });
-  }, [imageLoaded, getImageRect, flipGazeX, flipGazeY, userOffset]);
+  }, [imageLoaded, getImageRect]);
 
   // Tracking durdur
   const stopTracking = useCallback(() => {
@@ -652,7 +649,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     if (resultsPerImage.length > 0) {
       const exportData = {
         calibration: calibrationBlock,
-        user_offset_applied: userOffset ? { x: Math.round(userOffset.x), y: Math.round(userOffset.y) } : null,
         image_count: resultsPerImage.length,
         images: resultsPerImage.map((r, idx) => {
           const m = r.metrics;
@@ -709,7 +705,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     const gaze_points = smoothGazePointsForExport(gazePoints);
     const exportData = {
       calibration: calibrationBlock,
-      user_offset_applied: userOffset ? { x: Math.round(userOffset.x), y: Math.round(userOffset.y) } : null,
       gaze_points,
       gaze_point_count: gaze_points.length,
       first_fixation: metrics.firstFixation
@@ -748,7 +743,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     a.download = "eye-tracking-results.json";
     a.click();
     URL.revokeObjectURL(url);
-  }, [metrics, calibrationError, resultsPerImage, userOffset]);
+  }, [metrics, calibrationError, resultsPerImage]);
 
   // Heatmap dışa aktar
   const exportHeatmap = useCallback(() => {
@@ -909,7 +904,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
               )}
             </div>
             {isMultiImage && isTracking && (
-              <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden">
+              <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden" role="progressbar" aria-valuenow={Math.min(100, Math.round((trackingDuration / IMAGE_DURATION_MS) * 100))} aria-valuemin={0} aria-valuemax={100}>
                 <div
                   className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-1000 ease-linear"
                   style={{ width: `${Math.min(100, (trackingDuration / IMAGE_DURATION_MS) * 100)}%` }}
@@ -931,7 +926,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
             {showTransitionOverlay && isMultiImage && (
               <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/60 backdrop-blur-sm">
                 <div className="text-center text-white px-6 py-4 rounded-xl bg-gray-900/90 border border-gray-700">
-                  <p className="text-lg font-medium">{t.photoComplete.replace("{n}", String(currentImageIndex + 1)).replace("{total}", String(imageCount))}</p>
+                  <p className="text-lg font-medium">{t.photoComplete.replace("{n}", String(transitionPhotoNumRef.current)).replace("{total}", String(imageCount))}</p>
                   <p className="text-gray-300 text-sm mt-1">{t.nextPhoto}</p>
                 </div>
               </div>

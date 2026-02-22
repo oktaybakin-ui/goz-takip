@@ -42,6 +42,7 @@ function waitForMediaPipe(): Promise<void> {
 }
 
 let faceMeshInstance: MediaPipeFaceMesh | null = null;
+let detectMutex: Promise<void> = Promise.resolve();
 
 async function getFaceMesh(): Promise<MediaPipeFaceMesh> {
   if (faceMeshInstance) return faceMeshInstance;
@@ -61,27 +62,41 @@ async function getFaceMesh(): Promise<MediaPipeFaceMesh> {
   return faceMeshInstance;
 }
 
-/**
- * Tek bir resimde yüz landmark'larını döndürür (normalize 0–1).
- */
+export function destroyFaceCropMesh(): void {
+  faceMeshInstance = null;
+}
+
 function detectFaceInImage(
   img: HTMLImageElement
 ): Promise<MediaPipeFaceMeshResults | null> {
   const timeoutMs = 12000;
-  const work = new Promise<MediaPipeFaceMeshResults | null>(async (resolve) => {
+
+  let release: () => void;
+  const prev = detectMutex;
+  detectMutex = new Promise<void>((r) => { release = r; });
+
+  const work = (async (): Promise<MediaPipeFaceMeshResults | null> => {
+    await prev;
     try {
       const faceMesh = await getFaceMesh();
-      faceMesh.onResults((results: MediaPipeFaceMeshResults) => {
-        resolve(results);
+      const result = await new Promise<MediaPipeFaceMeshResults | null>((resolve) => {
+        faceMesh.onResults((results: MediaPipeFaceMeshResults) => {
+          resolve(results);
+        });
+        faceMesh.send({ image: img }).catch(() => resolve(null));
       });
-      await faceMesh.send({ image: img });
+      return result;
     } catch {
-      resolve(null);
+      return null;
+    } finally {
+      release!();
     }
+  })();
+
+  const timeout = new Promise<null>((resolve) => {
+    const t = setTimeout(() => resolve(null), timeoutMs);
+    work.finally(() => clearTimeout(t));
   });
-  const timeout = new Promise<null>((resolve) =>
-    setTimeout(() => resolve(null), timeoutMs)
-  );
   return Promise.race([work, timeout]);
 }
 

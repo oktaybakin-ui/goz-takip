@@ -258,6 +258,8 @@ export class FaceTracker {
       }
     } catch (e) {
       logger.warn("[FaceTracker] İlk frame gönderimi başarısız (normal):", e);
+      this.isModelReady = false;
+      return;
     }
 
     this.isModelReady = true;
@@ -782,9 +784,6 @@ export class FaceTracker {
     const leftEye = landmarks[FACE_POSE_LANDMARKS.leftEyeOuter];
     const rightEye = landmarks[FACE_POSE_LANDMARKS.rightEyeOuter];
     const forehead = landmarks[FACE_POSE_LANDMARKS.foreheadCenter];
-    const leftMouth = landmarks[FACE_POSE_LANDMARKS.leftMouthCorner];
-    const rightMouth = landmarks[FACE_POSE_LANDMARKS.rightMouthCorner];
-
     if (!noseTip || !chin || !leftEye || !rightEye || !forehead) {
       return { yaw: 0, pitch: 0, roll: 0 };
     }
@@ -881,6 +880,12 @@ export class FaceTracker {
     this.faceMesh = null;
     this.isModelReady = false;
     this.cameraInitialized = false;
+
+    if (this.zoomCanvas) {
+      this.zoomCanvas.width = 0;
+      this.zoomCanvas.height = 0;
+      this.zoomCanvas = null;
+    }
 
     // Landmark filtrelerini sıfırla
     Object.values(this.landmarkFilters).forEach(f => f.reset());

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef, useCallback } from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 import { useLang } from "@/contexts/LangContext";
 import { cropImagesToFace } from "@/lib/faceCrop";
 
@@ -19,11 +19,26 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
   const [isDragOver, setIsDragOver] = useState(false);
   const [isCropping, setIsCropping] = useState(false);
   const [croppingProgress, setCroppingProgress] = useState({ current: 0, total: 0 });
+  const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const addMoreInputRef = useRef<HTMLInputElement>(null);
+
+  // Revoke object URLs on unmount or when previews change
+  const prevUrlsRef = useRef<string[]>([]);
+  useEffect(() => {
+    const oldUrls = prevUrlsRef.current;
+    prevUrlsRef.current = previews;
+    return () => {
+      oldUrls.forEach((url) => {
+        if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+      });
+    };
+  }, [previews]);
 
   const handleFiles = useCallback(
     (files: FileList | null) => {
       if (!files?.length) return;
+      setUploadError(null);
 
       const imageFiles: File[] = [];
       for (let i = 0; i < files.length; i++) {
@@ -32,49 +47,16 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
       }
 
       if (imageFiles.length === 0) {
-        alert(t.selectImageFiles);
+        setUploadError(t.selectImageFiles);
         return;
       }
 
       const toLoad = imageFiles.slice(0, MAX_IMAGE_COUNT);
-      const newUrls: string[] = new Array(toLoad.length);
-      let loaded = 0;
+      const urls = toLoad.map((file) => URL.createObjectURL(file));
 
-      setIsUploading(true);
-      setUploadProgress(0);
-
-      toLoad.forEach((file, index) => {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const data = e.target?.result as string;
-          if (data) newUrls[index] = data;
-          loaded++;
-          const progress = Math.round((loaded / toLoad.length) * 100);
-          setUploadProgress(progress);
-          if (loaded === toLoad.length) {
-            const combined = newUrls.filter(Boolean);
-            if (combined.length > 0) {
-              setPreviews(combined.slice(0, MAX_IMAGE_COUNT));
-            } else {
-              alert(t.selectImageFiles);
-            }
-            setIsUploading(false);
-          }
-        };
-        reader.onerror = () => {
-          loaded++;
-          if (loaded === toLoad.length) {
-            const combined = newUrls.filter(Boolean);
-            if (combined.length > 0) {
-              setPreviews(combined.slice(0, MAX_IMAGE_COUNT));
-            } else {
-              alert(t.selectImageFiles);
-            }
-            setIsUploading(false);
-          }
-        };
-        reader.readAsDataURL(file);
-      });
+      setPreviews(urls.slice(0, MAX_IMAGE_COUNT));
+      setIsUploading(false);
+      setUploadProgress(100);
     },
     [t]
   );
@@ -109,7 +91,18 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
   );
 
   const removePreview = useCallback((index: number) => {
-    setPreviews((prev) => prev.filter((_, i) => i !== index));
+    setPreviews((prev) => {
+      const url = prev[index];
+      if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
+  const cropTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    return () => {
+      if (cropTimeoutRef.current) clearTimeout(cropTimeoutRef.current);
+    };
   }, []);
 
   const handleConfirm = useCallback(async () => {
@@ -117,7 +110,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
     setIsCropping(true);
     setCroppingProgress({ current: 0, total: previews.length });
     let timedOut = false;
-    const timeout = setTimeout(() => {
+    cropTimeoutRef.current = setTimeout(() => {
       timedOut = true;
       onImagesSelected(previews);
       setIsCropping(false);
@@ -128,10 +121,10 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
         0.25,
         (done, total) => setCroppingProgress({ current: done, total })
       );
-      clearTimeout(timeout);
+      if (cropTimeoutRef.current) clearTimeout(cropTimeoutRef.current);
       if (!timedOut) onImagesSelected(cropped);
     } catch {
-      clearTimeout(timeout);
+      if (cropTimeoutRef.current) clearTimeout(cropTimeoutRef.current);
       if (!timedOut) onImagesSelected(previews);
     } finally {
       setIsCropping(false);
@@ -169,6 +162,12 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
           🔒 {t.privacyNote}
         </p>
       </div>
+
+      {uploadError && (
+        <div role="alert" className="w-full max-w-2xl mb-3 bg-red-900/50 border border-red-500 rounded-lg px-4 py-2 text-red-300 text-sm text-center">
+          {uploadError}
+        </div>
+      )}
 
       {previews.length === 0 ? (
         <div
@@ -260,13 +259,13 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
           <div className="hidden sm:flex gap-3 flex-wrap justify-center">
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
+              onClick={() => addMoreInputRef.current?.click()}
               className="px-4 py-2 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600"
             >
               {t.addMore}
             </button>
             <input
-              ref={fileInputRef}
+              ref={addMoreInputRef}
               type="file"
               accept="image/*"
               multiple
@@ -305,7 +304,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => addMoreInputRef.current?.click()}
                   className="flex-1 min-h-[44px] px-3 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm touch-manipulation"
                 >
                   {t.addMore}

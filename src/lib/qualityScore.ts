@@ -107,8 +107,7 @@ export function computeQualityMetrics(
 
 export function exportCSV(
   gazePoints: GazePoint[],
-  fixations: { x: number; y: number; startTime: number; endTime: number; duration: number }[],
-  photoIndex?: number
+  fixations: { x: number; y: number; startTime: number; endTime: number; duration: number }[]
 ): string {
   const lines: string[] = [];
 

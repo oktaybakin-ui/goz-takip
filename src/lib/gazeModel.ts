@@ -73,15 +73,6 @@ function createPolynomialFeaturesWithCubic(input: number[]): number[] {
   return base;
 }
 
-// Özellik vektörünü normalize et
-function normalizeFeatures(features: number[], means: number[], stds: number[]): number[] {
-  return features.map((f, i) => {
-    if (i === 0) return f; // bias terimini atla
-    const std = stds[i] || 1;
-    return std === 0 ? 0 : (f - means[i]) / std;
-  });
-}
-
 // Weighted Ridge Regression ile ağırlık hesapla
 // (X^T W X + λI)^{-1} X^T W y
 // Her örnek confidence skoru ile ağırlıklandırılır
@@ -296,7 +287,7 @@ export class GazeModel {
   private predictionHistory: { x: number; y: number; t: number }[] = [];
   private readonly historyMaxSize: number = 11;
 
-  constructor(lambda: number = 0.008, _smoothingAlpha: number = 0.4) {
+  constructor(lambda: number = 0.008) {
     this.lambda = lambda;
     // OneEuro: X daha hızlı (yatay saccade sık), Y biraz daha yumuşak (dikey saccade nadir)
     this.filterX = new OneEuroFilter(1.5, 0.05, 1.0);
@@ -732,15 +723,23 @@ export class GazeModel {
   }
 
   importModel(json: string): void {
-    const data = JSON.parse(json);
-    this.weightsX = data.weightsX;
-    this.weightsY = data.weightsY;
-    this.featureMeans = data.featureMeans ?? [];
-    this.featureStds = data.featureStds ?? [];
-    this.lambda = data.lambda ?? 0.1;
-    this.driftOffsetX = data.driftOffsetX ?? 0;
-    this.driftOffsetY = data.driftOffsetY ?? 0;
-    this.refPose = data.refPose ?? null;
-    this.trained = true;
+    try {
+      const data = JSON.parse(json);
+      if (!Array.isArray(data.weightsX) || !Array.isArray(data.weightsY)) {
+        throw new Error("Invalid model data: missing weightsX/weightsY arrays");
+      }
+      this.weightsX = data.weightsX;
+      this.weightsY = data.weightsY;
+      this.featureMeans = data.featureMeans ?? [];
+      this.featureStds = data.featureStds ?? [];
+      this.lambda = data.lambda ?? 0.1;
+      this.driftOffsetX = data.driftOffsetX ?? 0;
+      this.driftOffsetY = data.driftOffsetY ?? 0;
+      this.refPose = data.refPose ?? null;
+      this.trained = true;
+    } catch (err) {
+      this.trained = false;
+      throw new Error("Failed to import gaze model: " + (err instanceof Error ? err.message : String(err)));
+    }
   }
 }

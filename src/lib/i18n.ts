@@ -275,8 +275,12 @@ const LANG_KEY = "eye-tracking-lang";
 
 export function getStoredLang(): Lang {
   if (typeof window === "undefined") return "tr";
-  const s = localStorage.getItem(LANG_KEY);
-  return s === "en" ? "en" : "tr";
+  try {
+    const s = localStorage.getItem(LANG_KEY);
+    return s === "en" ? "en" : "tr";
+  } catch {
+    return "tr";
+  }
 }
 
 export function setStoredLang(lang: Lang): void {

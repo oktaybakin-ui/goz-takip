@@ -82,7 +82,6 @@ export class FixationDetector {
 
   // Canlı fixation tespiti
   private currentFixationPoints: GazePoint[] = [];
-  private isInFixation: boolean = false;
 
   private lastValidTimestamp: number = 0;
   private readonly BLINK_GAP_MS = 80;
@@ -107,7 +106,6 @@ export class FixationDetector {
     this.fixations = [];
     this.saccades = [];
     this.currentFixationPoints = [];
-    this.isInFixation = false;
     this.trackingStartTime = performance.now();
   }
 
@@ -124,7 +122,6 @@ export class FixationDetector {
     if (this.lastValidTimestamp > 0) {
       const gap = point.timestamp - this.lastValidTimestamp;
       if (gap > this.BLINK_GAP_MS && gap < 400) {
-        this.lastValidTimestamp = point.timestamp;
         return null;
       }
     }
@@ -132,7 +129,6 @@ export class FixationDetector {
 
     if (this.currentFixationPoints.length === 0) {
       this.currentFixationPoints.push(point);
-      this.isInFixation = true;
       return null;
     }
 
@@ -223,7 +219,6 @@ export class FixationDetector {
   stopTracking(): void {
     this.finalizeFixation();
     this.currentFixationPoints = [];
-    this.isInFixation = false;
   }
 
   // DBSCAN kümeleme

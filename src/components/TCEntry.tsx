@@ -14,7 +14,9 @@ export default function TCEntry({ onSuccess }: TCEntryProps) {
   const [tc, setTc] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = (e: FormEvent) => {
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
     const trimmed = tc.replace(/\s/g, "");
@@ -26,13 +28,18 @@ export default function TCEntry({ onSuccess }: TCEntryProps) {
       setError(t.tcEntryInvalid);
       return;
     }
-    const result = canAccessWithTC(trimmed);
-    if (!result.allowed) {
-      setError(result.reason === "already_used" ? t.tcEntryAlreadyUsed : t.tcEntryInvalid);
-      return;
+    setLoading(true);
+    try {
+      const result = await canAccessWithTC(trimmed);
+      if (!result.allowed) {
+        setError(result.reason === "already_used" ? t.tcEntryAlreadyUsed : t.tcEntryInvalid);
+        return;
+      }
+      await markTCAsUsed(trimmed);
+      onSuccess(trimmed);
+    } finally {
+      setLoading(false);
     }
-    markTCAsUsed(trimmed);
-    onSuccess(trimmed);
   };
 
   return (
@@ -59,9 +66,11 @@ export default function TCEntry({ onSuccess }: TCEntryProps) {
             placeholder={t.tcEntryPlaceholder}
             className="w-full px-4 py-3 rounded-xl bg-gray-800 border border-gray-600 text-white placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/30 outline-none text-center text-lg tracking-widest"
             aria-label={t.tcEntryPlaceholder}
+            aria-invalid={!!error}
+            aria-describedby={error ? "tc-error" : undefined}
           />
           {error && (
-            <p className="text-red-400 text-sm text-center" role="alert">
+            <p id="tc-error" className="text-red-400 text-sm text-center" role="alert">
               {error}
             </p>
           )}

@@ -21,7 +21,8 @@ export default function HeatmapCanvas({
   opacity = 0.6,
 }: HeatmapCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const generatorRef = useRef<HeatmapGenerator>(new HeatmapGenerator());
+  const generatorRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
+  if (!generatorRef.current) generatorRef.current = new HeatmapGenerator();
 
   useEffect(() => {
     if (!canvasRef.current) return;

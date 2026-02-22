@@ -4,6 +4,26 @@ import React, { useRef, useEffect, useState, useCallback } from "react";
 import type { GazePoint } from "@/lib/gazeModel";
 import type { Fixation } from "@/lib/fixation";
 
+function lowerBound(arr: GazePoint[], ts: number): number {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].timestamp < ts) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function upperBound(arr: GazePoint[], ts: number): number {
+  let lo = 0, hi = arr.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (arr[mid].timestamp <= ts) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 interface GazeReplayProps {
   gazePoints: GazePoint[];
   fixations: Fixation[];
@@ -20,6 +40,7 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
   const [speed, setSpeed] = useState(1);
   const startTimeRef = useRef(0);
   const pauseOffsetRef = useRef(0);
+  const lastProgressUpdateRef = useRef(0);
 
   const totalDuration = gazePoints.length > 1
     ? gazePoints[gazePoints.length - 1].timestamp - gazePoints[0].timestamp
@@ -38,9 +59,9 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
 
     const trailLength = 500;
     const trailStart = cutoff - trailLength;
-    const trailPoints = gazePoints.filter(
-      (p) => p.timestamp >= trailStart && p.timestamp <= cutoff
-    );
+    const startIdx = lowerBound(gazePoints, trailStart);
+    const endIdx = upperBound(gazePoints, cutoff);
+    const trailPoints = gazePoints.slice(startIdx, endIdx);
 
     if (trailPoints.length > 1) {
       ctx.beginPath();
@@ -81,9 +102,13 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
   const animate = useCallback(() => {
     if (!playing) return;
 
-    const elapsed = (performance.now() - startTimeRef.current) * speed + pauseOffsetRef.current;
+    const now = performance.now();
+    const elapsed = (now - startTimeRef.current) * speed + pauseOffsetRef.current;
     const pct = Math.min(1, elapsed / totalDuration);
-    setProgress(pct);
+    if (now - lastProgressUpdateRef.current > 100) {
+      lastProgressUpdateRef.current = now;
+      setProgress(pct);
+    }
     draw(elapsed);
 
     if (pct >= 1) {
@@ -167,6 +192,7 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
           value={progress}
           onChange={handleSeek}
           className="flex-1 h-2 accent-blue-500"
+          aria-label="Seek"
         />
 
         <span className="text-gray-400 text-xs whitespace-nowrap min-w-[4rem] text-right">
@@ -177,6 +203,7 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
           value={speed}
           onChange={(e) => setSpeed(parseFloat(e.target.value))}
           className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-700"
+          aria-label="Playback speed"
         >
           <option value={0.25}>0.25x</option>
           <option value={0.5}>0.5x</option>
