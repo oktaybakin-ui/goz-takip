@@ -620,47 +620,45 @@ export class GazeModel {
       if (dPitch > 0.12) poseConfPenalty *= Math.max(0.3, 1 - (dPitch - 0.12) * 2);
     }
 
-    // Velocity-aware outlier rejection: hız bağlamında sıçrama tespiti
+    // Velocity-aware outlier rejection: sadece aşırı sıçramaları reddet (daha az sıkı, veri kaybı azalsın)
     if (this.predictionHistory.length >= 3) {
       const recent = this.predictionHistory.slice(-3);
       const lastPt = recent[recent.length - 1];
       const dt = now - lastPt.t;
       const dist = Math.sqrt((correctedX - lastPt.x) ** 2 + (correctedY - lastPt.y) ** 2);
 
-      // Mevcut hız (px/ms)
-      const velocity = dt > 0 ? dist / dt : 0;
-      // Geçmiş ortalama hız
       let avgVelocity = 0;
       for (let i = 1; i < recent.length; i++) {
         const d = Math.sqrt((recent[i].x - recent[i-1].x) ** 2 + (recent[i].y - recent[i-1].y) ** 2);
         const t = recent[i].t - recent[i-1].t;
         if (t > 0) avgVelocity += d / t;
       }
-      avgVelocity /= (recent.length - 1);
+      avgVelocity /= Math.max(1, recent.length - 1);
 
       const screenMax = typeof window !== "undefined"
         ? Math.max(window.innerWidth, window.innerHeight)
         : 1920;
-      // Adaptif eşik: yavaş hareket sırasında daha sıkı, hızlı hareket sırasında daha gevşek
-      const baseThreshold = screenMax * 0.12;
-      const velocityBonus = Math.min(avgVelocity * 80, screenMax * 0.15);
+      // Daha gevşek eşik: daha az nokta reddedilsin, heatmap verisi toplanabilsin
+      const baseThreshold = screenMax * 0.22;
+      const velocityBonus = Math.min(avgVelocity * 120, screenMax * 0.2);
       const jumpThreshold = baseThreshold + velocityBonus;
 
       if (dist > jumpThreshold) {
-        // Ardışık 2 spike olursa gerçek pozisyon değişikliği, kabul et
         if (this.predictionHistory.length >= 2) {
           const prevDist = Math.sqrt(
             (lastPt.x - recent[recent.length - 2].x) ** 2 +
             (lastPt.y - recent[recent.length - 2].y) ** 2
           );
-          if (prevDist > jumpThreshold * 0.7) {
-            // Büyük saccade - hızlı reset ve kabul et
+          if (prevDist > jumpThreshold * 0.6) {
             this.predictionHistory = [];
             this.filterX.reset();
             this.filterY.reset();
+          } else {
+            return null;
           }
+        } else {
+          return null;
         }
-        return null;
       }
     }
 

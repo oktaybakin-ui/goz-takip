@@ -106,17 +106,15 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [error, setError] = useState<string | null>(null);
-  const [fps, setFps] = useState(0);
-  const [eyeZoomActive, setEyeZoomActive] = useState(false);
+  const [, setFps] = useState(0);
+  const [, setEyeZoomActive] = useState(false);
   const [gazePoint, setGazePoint] = useState<GazePoint | null>(null);
   const [fixations, setFixations] = useState<Fixation[]>([]);
   const [metrics, setMetrics] = useState<FixationMetrics | null>(null);
   const [showHeatmap, setShowHeatmap] = useState(false);
-  const [showRawScreenGaze, setShowRawScreenGaze] = useState(false);
-  const [rawScreenGaze, setRawScreenGaze] = useState<{ x: number; y: number } | null>(null);
-  const [flipGazeX, setFlipGazeX] = useState(false);
-  const [flipGazeY, setFlipGazeY] = useState(false);
-  const [userOffset, setUserOffset] = useState<{ x: number; y: number } | null>(null);
+  const [flipGazeX] = useState(false);
+  const [flipGazeY] = useState(false);
+  const [userOffset] = useState<{ x: number; y: number } | null>(null);
   const [isTracking, setIsTracking] = useState(false);
   const [trackingDuration, setTrackingDuration] = useState(0);
   const [calibrationError, setCalibrationError] = useState<number>(0);
@@ -150,22 +148,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const drawAnimRef = useRef<number>(0);
   const lastUiUpdateRef = useRef<number>(0);
   const lastRawScreenPointRef = useRef<{ x: number; y: number } | null>(null);
-  const lookHereOffsetsRef = useRef<{ x: number; y: number }[]>([]);
   const GAZE_UI_THROTTLE_MS = 80;
-
-  const LOOK_HERE_MAX = 7; // Son 7 tıklama medyanı = daha kararlı offset
-  const OFFSET_CAP_PX = 1500;
-
-  function medianOffset(arr: { x: number; y: number }[]): { x: number; y: number } {
-    if (arr.length === 0) return { x: 0, y: 0 };
-    if (arr.length === 1) return arr[0];
-    const xs = [...arr].map((o) => o.x).sort((a, b) => a - b);
-    const ys = [...arr].map((o) => o.y).sort((a, b) => a - b);
-    const m = arr.length >> 1;
-    const x = arr.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2;
-    const y = arr.length % 2 ? ys[m] : (ys[m - 1] + ys[m]) / 2;
-    return { x, y };
-  }
 
   const imageCount = imageUrls.length;
   const isMultiImage = imageCount > 1;
@@ -221,9 +204,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     img.src = currentImageUrl;
   }, [currentImageUrl, currentImageIndex, isMultiImage]);
 
-  // Kamerayı başlat
+  const cameraInitializedRef = useRef(false);
+
+  // Kamerayı başlat — yalnızca ilk görüntü yüklendiğinde bir kez çalışır
   useEffect(() => {
-    if (!imageLoaded) return;
+    if (!imageLoaded || cameraInitializedRef.current) return;
 
     let mounted = true;
 
@@ -241,6 +226,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         await faceTrackerRef.current.initialize(videoRef.current);
 
         if (!mounted) return;
+
+        cameraInitializedRef.current = true;
 
         setCameraStatus("FaceMesh modeli yükleniyor...");
         faceTrackerRef.current.startTracking(() => {});
@@ -266,9 +253,17 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
     return () => {
       mounted = false;
-      faceTrackerRef.current.destroy();
     };
   }, [imageLoaded]);
+
+  // Kamera temizliği — component unmount olduğunda
+  useEffect(() => {
+    const tracker = faceTrackerRef.current;
+    return () => {
+      tracker.destroy();
+      cameraInitializedRef.current = false;
+    };
+  }, []);
 
   // 20 saniye dolunca sonraki fotoğrafa geç (çoklu foto modu)
   useEffect(() => {
@@ -398,8 +393,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         return;
       }
 
-      // Odaklanma: sadece yüz/iris net göründüğünde nokta kabul et (takip kalitesi artar)
-      if (features.confidence < 0.3 || features.eyeOpenness < 0.05) {
+      // Yüz/iris yeterince görünür olsun; eşik düşük tutulur ki veri toplanabilsin
+      if (features.confidence < 0.15 || features.eyeOpenness < 0.02) {
         if (shouldLog) logger.log("[Tracking] Düşük confidence/eyeOpenness:", features.confidence.toFixed(2), features.eyeOpenness.toFixed(3));
         return;
       }
@@ -503,9 +498,9 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       const edgeDistX = Math.min(point.x, dims.width - point.x);
       const edgeDistY = Math.min(point.y, dims.height - point.y);
       const edgeDist = Math.min(edgeDistX, edgeDistY);
-      if (edgeDist > 0) {
-        // Kenar yakınında confidence düşür (BOUNDARY_MARGIN içindeyse)
-        if (edgeDist < BOUNDARY_MARGIN) {
+      // Kenar yakınında confidence düşür; tüm noktaları kaydet (takılmama için)
+      if (edgeDist >= 0 && dims.width > 0 && dims.height > 0) {
+        if (edgeDist < BOUNDARY_MARGIN && edgeDist > 0) {
           point.confidence *= (edgeDist / BOUNDARY_MARGIN);
         }
         gazePointsRef.current.push(point);
@@ -522,7 +517,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       if (now - lastUiUpdateRef.current >= GAZE_UI_THROTTLE_MS) {
         lastUiUpdateRef.current = now;
         setGazePoint(point);
-        setRawScreenGaze({ x: screenPoint.x, y: screenPoint.y });
         setFps(faceTrackerRef.current.getFPS());
         setEyeZoomActive(faceTrackerRef.current.getLastFrameUsedZoom());
       }
@@ -567,36 +561,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     };
   }, [phase, isTracking, startTracking, stopTracking]);
 
-  // Drift düzeltme
-  const handleDriftCorrection = useCallback(() => {
-    modelRef.current.resetSmoothing();
-  }, []);
-
-  // "Burada bakıyorum": son 5 tıklamanın medyanı, ±1500 px sınırı
-  const handleLookHereOffset = useCallback(() => {
-    const rect = getImageRect();
-    const raw = lastRawScreenPointRef.current;
-    if (!rect || !raw) return;
-    const content = getContentRect(
-      rect,
-      imageDimensions.width,
-      imageDimensions.height,
-      imageNaturalDimensions.width || imageDimensions.width,
-      imageNaturalDimensions.height || imageDimensions.height
-    );
-    if (!content) return;
-    const targetX = content.contentLeft + content.contentW / 2;
-    const targetY = content.contentTop + content.contentH / 2;
-    let ox = targetX - raw.x;
-    let oy = targetY - raw.y;
-    ox = Math.max(-OFFSET_CAP_PX, Math.min(OFFSET_CAP_PX, ox));
-    oy = Math.max(-OFFSET_CAP_PX, Math.min(OFFSET_CAP_PX, oy));
-    const arr = lookHereOffsetsRef.current;
-    arr.push({ x: ox, y: oy });
-    if (arr.length > LOOK_HERE_MAX) arr.shift();
-    setUserOffset(medianOffset(arr));
-  }, [getImageRect, imageDimensions, imageNaturalDimensions]);
-
   // Canvas çizimi
   useEffect(() => {
     if (phase !== "tracking" || !canvasRef.current) return;
@@ -614,19 +578,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       if (!running) return;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Ortada hedef nokta: "Burada bakıyorum" için bakılacak yer
-      const cx = canvas.width / 2;
-      const cy = canvas.height / 2;
-      ctx.beginPath();
-      ctx.arc(cx, cy, 14, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
-      ctx.lineWidth = 2;
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cx, cy, 4, 0, Math.PI * 2);
-      ctx.fillStyle = "rgba(255, 255, 255, 0.2)";
-      ctx.fill();
 
       // Canlı gaze noktası
       if (gazePoint && isTracking) {
@@ -966,33 +917,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
               </div>
             )}
           </div>
-
-          {/* Ham ekran noktası (viewport): modelin tahmin ettiği yer — takip yanlışsa önce bunu kontrol et */}
-          {showRawScreenGaze && rawScreenGaze && isTracking && (
-            <div
-              className="fixed inset-0 pointer-events-none z-[100]"
-              aria-hidden
-            >
-              <div
-                className="absolute w-6 h-6 rounded-full border-2 border-red-500 bg-red-500/50"
-                style={{
-                  left: rawScreenGaze.x,
-                  top: rawScreenGaze.y,
-                  transform: "translate(-50%, -50%)",
-                }}
-              />
-              <div
-                className="absolute text-red-400 text-xs whitespace-nowrap bg-black/70 px-1 rounded"
-                style={{
-                  left: rawScreenGaze.x + 16,
-                  top: rawScreenGaze.y,
-                  transform: "translateY(-50%)",
-                }}
-              >
-                ekran: {Math.round(rawScreenGaze.x)}, {Math.round(rawScreenGaze.y)}
-              </div>
-            </div>
-          )}
 
           {/* Görüntü + Overlay */}
           <div
