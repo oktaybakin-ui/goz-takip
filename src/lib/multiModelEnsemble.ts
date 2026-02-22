@@ -215,7 +215,7 @@ export class MultiModelEnsemble {
   }
   
   reset(): void {
-    this.models.forEach(m => m.reset());
+    this.models.forEach(m => m.resetSmoothing());
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
   }
 }
