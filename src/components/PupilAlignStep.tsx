@@ -206,7 +206,7 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
           style={{ maxWidth: videoSize.w, maxHeight: videoSize.h }}
         >
           <video
-            ref={videoRef}
+            ref={videoRef as React.RefObject<HTMLVideoElement>}
             className="w-full h-auto max-h-[50vh] object-contain transform scale-x-[-1]"
             playsInline
             muted
