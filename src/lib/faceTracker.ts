@@ -94,7 +94,8 @@ export class FaceTracker {
   private animFrameId: number = 0;
   private cameraInitialized: boolean = false;
   private consecutiveErrors: number = 0;
-  private readonly MAX_CONSECUTIVE_ERRORS = 5;
+  private readonly MAX_CONSECUTIVE_ERRORS = 8;
+  private errorCooldownUntil: number = 0;
 
   /** Göz bölgesi zoom: önceki karenin göz bölgesini kırpıp büyüterek iris için daha fazla piksel. */
   private zoomCanvas: HTMLCanvasElement | null = null;
@@ -361,76 +362,88 @@ export class FaceTracker {
   private async processFrame(): Promise<void> {
     if (!this.isRunning || !this.videoElement || !this.faceMesh) return;
 
-    if (
+    const now = performance.now();
+
+    // Hata cooldown: art arda hata varsa üstel bekle (2s, 4s, 8s...) sonra tekrar dene
+    if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS && now < this.errorCooldownUntil) {
+      // Cooldown süresinde — frame gönderme, sadece döngüyü devam ettir
+    } else if (
       this.videoElement.readyState >= 2 &&
       this.isModelReady &&
-      !this.isProcessingFrame &&
-      this.consecutiveErrors < this.MAX_CONSECUTIVE_ERRORS
+      !this.isProcessingFrame
     ) {
+      // Cooldown bittiyse hata sayacını sıfırla ve tekrar dene
+      if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS) {
+        logger.log("[FaceTracker] Cooldown bitti, tekrar deneniyor...");
+        this.consecutiveErrors = 0;
+      }
+
       try {
         this.isProcessingFrame = true;
         const vw = this.videoElement.videoWidth;
         const vh = this.videoElement.videoHeight;
         if (vw === 0 || vh === 0) {
           this.isProcessingFrame = false;
-          return;
-        }
+        } else {
+          if (this.zoomDisabledFrames > 0) {
+            this.zoomDisabledFrames--;
+          }
 
-        if (this.zoomDisabledFrames > 0) {
-          this.zoomDisabledFrames--;
-        }
-
-        let sent = false;
-        if (
-          this.lastEyeBbox &&
-          vw >= 640 &&
-          this.zoomDisabledFrames === 0
-        ) {
-          const { x, y, w, h } = this.lastEyeBbox;
-          if (!this.zoomCanvas) this.zoomCanvas = document.createElement("canvas");
-          this.zoomCanvas.width = vw;
-          this.zoomCanvas.height = vh;
-          const ctx = this.zoomCanvas.getContext("2d");
-          if (ctx) {
-            ctx.drawImage(
-              this.videoElement,
-              x * vw, y * vh, w * vw, h * vh,
-              0, 0, vw, vh
-            );
-            try {
-              this.currentCropBounds = this.lastEyeBbox;
-              await this.faceMesh.send({ image: this.zoomCanvas });
-              sent = true;
-            } catch {
-              this.zoomDisabledFrames = 60;
-              this.currentCropBounds = null;
+          // Zoom crop — hata geçmişi varsa zoom'u atla (basit frame gönder)
+          let sent = false;
+          if (
+            this.lastEyeBbox &&
+            vw >= 640 &&
+            this.zoomDisabledFrames === 0 &&
+            this.consecutiveErrors === 0
+          ) {
+            const { x, y, w, h } = this.lastEyeBbox;
+            if (!this.zoomCanvas) this.zoomCanvas = document.createElement("canvas");
+            this.zoomCanvas.width = vw;
+            this.zoomCanvas.height = vh;
+            const ctx = this.zoomCanvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(
+                this.videoElement,
+                x * vw, y * vh, w * vw, h * vh,
+                0, 0, vw, vh
+              );
+              try {
+                this.currentCropBounds = this.lastEyeBbox;
+                await this.faceMesh.send({ image: this.zoomCanvas });
+                sent = true;
+              } catch {
+                this.zoomDisabledFrames = 60;
+                this.currentCropBounds = null;
+              }
             }
           }
+          if (!sent) {
+            this.currentCropBounds = null;
+            await this.faceMesh.send({ image: this.videoElement });
+          }
+          this.lastFrameUsedZoom = sent;
+          this.consecutiveErrors = 0;
         }
-        if (!sent) {
-          this.currentCropBounds = null;
-          await this.faceMesh.send({ image: this.videoElement });
-        }
-        this.lastFrameUsedZoom = sent;
-        this.consecutiveErrors = 0;
       } catch (e) {
         this.isProcessingFrame = false;
         this.consecutiveErrors++;
-        if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS) {
-          logger.error("[FaceTracker] Ardışık", this.consecutiveErrors, "hata — frame gönderimi durduruldu. MediaPipe WASM yüklenememiş olabilir.");
-        } else {
-          logger.warn("[FaceTracker] Frame gönderim hatası (", this.consecutiveErrors, "/", this.MAX_CONSECUTIVE_ERRORS, "):", e);
+        // Üstel cooldown: 2^n saniye (max 16s)
+        const cooldownSec = Math.min(16, Math.pow(2, Math.floor(this.consecutiveErrors / this.MAX_CONSECUTIVE_ERRORS)));
+        this.errorCooldownUntil = now + cooldownSec * 1000;
+        if (this.consecutiveErrors % this.MAX_CONSECUTIVE_ERRORS === 0) {
+          logger.warn("[FaceTracker] Ardışık", this.consecutiveErrors, "hata —", cooldownSec, "s cooldown");
         }
       }
     }
 
     // FPS hesapla
     this.frameCount++;
-    const now = performance.now();
-    if (now - this.lastFpsTime >= 1000) {
+    const fpsNow = performance.now();
+    if (fpsNow - this.lastFpsTime >= 1000) {
       this.fps = this.frameCount;
       this.frameCount = 0;
-      this.lastFpsTime = now;
+      this.lastFpsTime = fpsNow;
     }
 
     if (this.isRunning) {
@@ -847,6 +860,7 @@ export class FaceTracker {
     this.isModelReady = false;
     this.cameraInitialized = false;
     this.consecutiveErrors = 0;
+    this.errorCooldownUntil = 0;
 
     if (this.zoomCanvas) {
       this.zoomCanvas.width = 0;
