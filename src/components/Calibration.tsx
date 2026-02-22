@@ -16,7 +16,7 @@ import { useLang } from "@/contexts/LangContext";
 interface CalibrationProps {
   model: GazeModel;
   faceTracker: FaceTracker;
-  onComplete: (meanError: number) => void;
+  onComplete: (meanError: number, samples?: any[]) => void;
   onCancel?: () => void;
 }
 
@@ -292,8 +292,12 @@ export default function Calibration({
   const handleComplete = useCallback(() => {
     const manager = managerRef.current;
     if (!manager) return;
-    const meanError = manager.getState().meanError || 0;
-    onComplete(meanError);
+    const state = manager.getState();
+    const meanError = state.meanError || 0;
+    
+    // Kalibrasyon sample'larını gönder (ensemble için)
+    const samples = state.samples || [];
+    onComplete(meanError, samples);
   }, [onComplete]);
 
   const handleLoadStored = useCallback(() => {
@@ -301,7 +305,7 @@ export default function Calibration({
     if (!stored) return;
     try {
       model.importModel(stored.modelJson);
-      onComplete(stored.meanErrorPx);
+      onComplete(stored.meanErrorPx, []);
     } catch {
       setStoredInfo(null);
     }

@@ -5,6 +5,8 @@ import { GazeModel, GazePoint, EyeFeatures } from "@/lib/gazeModel";
 import { FaceTracker } from "@/lib/faceTracker";
 import { FixationDetector, Fixation, FixationMetrics } from "@/lib/fixation";
 import { HeatmapGenerator } from "@/lib/heatmap";
+import { MultiModelEnsemble } from "@/lib/multiModelEnsemble";
+import { AutoRecalibration } from "@/lib/autoRecalibration";
 import { logger } from "@/lib/logger";
 import { useLang } from "@/contexts/LangContext";
 import Calibration from "./Calibration";
@@ -136,7 +138,12 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   imageNatDimsRef.current = imageNaturalDimensions;
 
   const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
-  if (!modelRef.current) modelRef.current = new GazeModel(0.005);  // Daha düşük lambda = daha hassas kalibrasyon
+  if (!modelRef.current) modelRef.current = new GazeModel(0.005, true);  // Kalman filter etkin
+  const ensembleRef = useRef<MultiModelEnsemble>(null as unknown as MultiModelEnsemble);
+  if (!ensembleRef.current) ensembleRef.current = new MultiModelEnsemble();
+  const autoRecalRef = useRef<AutoRecalibration>(null as unknown as AutoRecalibration);
+  if (!autoRecalRef.current) autoRecalRef.current = new AutoRecalibration();
+  const useEnsemble = useRef(true); // Multi-model ensemble kullan
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
@@ -144,6 +151,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const heatmapRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
   if (!heatmapRef.current) heatmapRef.current = new HeatmapGenerator();
   const trackingTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const autoRecalTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gazePointsRef = useRef<GazePoint[]>([]);
   const drawAnimRef = useRef<number>(0);
   const lastUiUpdateRef = useRef<number>(0);
@@ -363,8 +371,15 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   }, [showTransitionOverlay]);
 
   // Kalibrasyon tamamlandı (bias CalibrationManager içinde modele uygulandı)
-  const handleCalibrationComplete = useCallback((meanError: number) => {
+  const handleCalibrationComplete = useCallback((meanError: number, samples?: any[]) => {
     setCalibrationError(meanError);
+    
+    // Ensemble'ı eğit (eğer samples varsa)
+    if (samples && samples.length > 0 && ensembleRef.current) {
+      logger.log("[EyeTracker] Training ensemble with", samples.length, "samples");
+      ensembleRef.current.train(samples);
+    }
+    
     setPhase("tracking");
     // Kalibrasyon yapılan ekran boyutunu kaydet
     calibratedScreenSize.current = { w: window.innerWidth, h: window.innerHeight };
@@ -412,6 +427,18 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     trackingTimerRef.current = setInterval(() => {
       setTrackingDuration((prev) => prev + 100);
     }, 100);
+    
+    // Auto-recalibration timer (her 30 saniyede bir kontrol)
+    if (autoRecalRef.current && !autoRecalTimerRef.current) {
+      autoRecalTimerRef.current = setInterval(() => {
+        if (autoRecalRef.current && modelRef.current) {
+          const updated = autoRecalRef.current.updateModel(modelRef.current);
+          if (updated) {
+            logger.log("[EyeTracker] Model auto-recalibrated");
+          }
+        }
+      }, 30000);
+    }
 
     // Gaze tracking - mevcut tracking'i durdurup yeni callback ile başlat
     faceTrackerRef.current.stopTracking();
@@ -441,8 +468,15 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         return;
       }
 
-      // Model ekran koordinatlarında tahmin yapar
-      let screenPoint = modelRef.current.predict(features);
+      // Model tahminini al (ensemble veya single)
+      let screenPoint: GazePoint | null = null;
+      
+      if (useEnsemble.current && ensembleRef.current) {
+        screenPoint = ensembleRef.current.predict(features) as GazePoint;
+      } else {
+        screenPoint = modelRef.current.predict(features);
+      }
+      
       if (!screenPoint) {
         if (shouldLog) logger.log("[Tracking] Model predict null döndü (outlier?)");
         return;
@@ -544,6 +578,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         const fixation = fixationDetectorRef.current.addGazePoint(point);
         if (fixation) {
           setFixations((prev) => [...prev, fixation]);
+          
+          // Auto-recalibration için fixation kaydet
+          if (autoRecalRef.current) {
+            autoRecalRef.current.registerFixation(fixation, features);
+          }
         }
       }
 
@@ -562,6 +601,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     if (trackingTimerRef.current) {
       clearInterval(trackingTimerRef.current);
       trackingTimerRef.current = null;
+    }
+    
+    if (autoRecalTimerRef.current) {
+      clearInterval(autoRecalTimerRef.current);
+      autoRecalTimerRef.current = null;
     }
 
     fixationDetectorRef.current.stopTracking();
@@ -965,6 +1009,14 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
             style={{
               width: imageDimensions.width,
               height: imageDimensions.height,
+            }}
+            onClick={(e) => {
+              if (isTracking && autoRecalRef.current) {
+                const rect = e.currentTarget.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                autoRecalRef.current.registerClick(x, y);
+              }
             }}
           >
             {/* Geçiş overlay */}

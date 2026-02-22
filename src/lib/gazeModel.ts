@@ -9,6 +9,8 @@
  */
 
 import { logger } from "./logger";
+import { KalmanFilter2D } from "./kalmanFilter";
+import { AdvancedIrisDetector } from "./advancedIrisDetection";
 
 export interface EyeFeatures {
   // Ham iris koordinatları (MediaPipe normalized 0-1)
@@ -331,9 +333,17 @@ export class GazeModel {
   // Tahmin geçmişi (outlier rejection)
   private predictionHistory: { x: number; y: number; t: number }[] = [];
   private readonly historyMaxSize: number = 11;
+  
+  // Kalman filter for additional smoothing
+  private kalmanFilter: KalmanFilter2D | null = null;
+  private useKalmanFilter: boolean = true;
 
-  constructor(lambda: number = 0.008) {
+  constructor(lambda: number = 0.008, useKalman: boolean = true) {
     this.lambda = lambda;
+    this.useKalmanFilter = useKalman;
+    if (useKalman) {
+      this.kalmanFilter = new KalmanFilter2D(0.1, 5.0);
+    }
     // Tek filtre katmanı (landmark filtreleri kaldırıldı)
     // Daha yüksek minCutoff: hızlı saccade'lere daha duyarlı
     // Daha yüksek beta: hız artınca cutoff hızla yükselir → gecikme azalır
@@ -785,16 +795,31 @@ export class GazeModel {
     // One Euro Filter uygula
     const filteredX = this.filterX.filter(correctedX, now);
     const filteredY = this.filterY.filter(correctedY, now);
+    
+    // Kalman filter (opsiyonel ekstra smoothing)
+    let finalX = filteredX;
+    let finalY = filteredY;
+    
+    if (this.useKalmanFilter && this.kalmanFilter) {
+      const kalmanResult = this.kalmanFilter.filter(filteredX, filteredY, now);
+      finalX = kalmanResult.x;
+      finalY = kalmanResult.y;
+      
+      // Update One Euro filter parameters based on Kalman velocity
+      const kalmanVelocity = Math.sqrt(kalmanResult.vx ** 2 + kalmanResult.vy ** 2);
+      this.filterX.setDynamicParams(kalmanVelocity);
+      this.filterY.setDynamicParams(kalmanVelocity);
+    }
 
     // Geçmişe ekle
-    this.predictionHistory.push({ x: filteredX, y: filteredY, t: now });
+    this.predictionHistory.push({ x: finalX, y: finalY, t: now });
     if (this.predictionHistory.length > this.historyMaxSize) {
       this.predictionHistory.shift();
     }
 
     return {
-      x: filteredX,
-      y: filteredY,
+      x: finalX,
+      y: finalY,
       timestamp: now,
       confidence: features.confidence * poseConfPenalty,
     };
@@ -822,6 +847,25 @@ export class GazeModel {
     this.driftOffsetY = 0;
     this.affineCorrection = null;
     this.predictionHistory = [];
+    if (this.kalmanFilter) {
+      this.kalmanFilter.reset();
+    }
+  }
+  
+  /**
+   * Get/set model weights for ensemble or auto-recalibration
+   */
+  getWeights(): { weightsX: number[] | null; weightsY: number[] | null } {
+    return {
+      weightsX: this.weightsX,
+      weightsY: this.weightsY
+    };
+  }
+  
+  setWeights(weights: { weightsX: number[]; weightsY: number[] }): void {
+    this.weightsX = weights.weightsX;
+    this.weightsY = weights.weightsY;
+    this.trained = true;
   }
 
   /** Doğrulama sonrası ortalama sapmayı (bias) uygula – tahminleri hedefe yaklaştırır */

@@ -13,6 +13,7 @@
 
 import { EyeFeatures } from "./gazeModel";
 import { logger } from "./logger";
+import { AdvancedIrisDetector } from "./advancedIrisDetection";
 
 // MediaPipe landmark indeksleri
 const LEFT_EYE_INDICES = {
@@ -117,10 +118,15 @@ export class FaceTracker {
     rightX: number[], rightY: number[] 
   } = { leftX: [], leftY: [], rightX: [], rightY: [] };
   private readonly IRIS_HISTORY_SIZE = 5;
+  
+  // Advanced iris detector
+  private advancedIrisDetector: AdvancedIrisDetector | null = null;
+  private useAdvancedIris: boolean = true;
 
   constructor() {
     // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter
     // tek başına yeterli (çift filtreleme ~80ms gecikme ekliyordu)
+    this.advancedIrisDetector = new AdvancedIrisDetector();
   }
 
   /**
