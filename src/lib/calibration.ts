@@ -114,9 +114,9 @@ export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: 0.14,
+    headMovement: 0.12,
     minConfidence: 0.3,
-    minEyeOpenness: 0.06,
+    minEyeOpenness: 0.08,
   }
 ): StabilityCheck {
   if (features.confidence < thresholds.minConfidence) {
@@ -181,10 +181,10 @@ export class CalibrationManager {
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
   private readonly IRIS_BUFFER_SIZE = 15;
-  private readonly IRIS_STD_MAX = 0.04;
-  private readonly MIN_SAMPLES_PER_POINT = 30;
-  private readonly MIN_CONFIDENCE_CALIBRATION = 0.35;
-  private readonly RETRY_QUALITY_THRESHOLD = 15;
+  private readonly IRIS_STD_MAX = 0.025;
+  private readonly MIN_SAMPLES_PER_POINT = 35;
+  private readonly MIN_CONFIDENCE_CALIBRATION = 0.40;
+  private readonly RETRY_QUALITY_THRESHOLD = 20;
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();

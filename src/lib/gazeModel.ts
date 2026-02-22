@@ -423,8 +423,8 @@ export class GazeModel {
     // Outlier temizle
     const cleanSamples = removeOutliers(samples);
 
-    if (cleanSamples.length < 62) {
-      throw new Error("Yeterli kalibrasyon verisi yok (en az 62 örnek gerekli – tüm noktaları tamamlayın)");
+    if (cleanSamples.length < 80) {
+      throw new Error("Yeterli kalibrasyon verisi yok (en az 80 örnek gerekli – tüm noktaları tamamlayın)");
     }
 
     // Referans baş pozunu kalibrasyon verilerinin ortalamasından hesapla
@@ -447,7 +447,7 @@ export class GazeModel {
       logger.error("[GazeModel] NaN veya Infinity feature değeri tespit edildi!");
       // NaN satırlarını temizle ve cleanSamples/rawInputs'ı güncelle
       const validIndices = validMask.map((ok, i) => ok ? i : -1).filter(i => i >= 0);
-      if (validIndices.length < 55) {
+      if (validIndices.length < 70) {
         throw new Error("Yeterli geçerli kalibrasyon verisi yok (NaN temizliği sonrası)");
       }
       // Temizlenmiş veriyle devam et
@@ -479,47 +479,79 @@ export class GazeModel {
     const targetsX = cleanSamples.map((s) => s.targetX);
     const targetsY = cleanSamples.map((s) => s.targetY);
 
-    // Lineer confidence ağırlıklama (c^2 gürültülü güven skorlarında bias yaratır)
+    // Ekran merkezi ve köşegen (spatial weighting + residual cleanup için)
+    const screenCenterX = targetsX.reduce((s, v) => s + v, 0) / targetsX.length;
+    const screenCenterY = targetsY.reduce((s, v) => s + v, 0) / targetsY.length;
+    const screenDiag = Math.sqrt(
+      Math.max(...targetsX.map(x => (x - screenCenterX) ** 2)) +
+      Math.max(...targetsY.map(y => (y - screenCenterY) ** 2))
+    ) || 1;
+
+    // Spatial + confidence weighting: kenar/köşe örnekleri daha yüksek ağırlık alır
+    // Bu sayede model kenar bölgelerini daha iyi öğrenir (kalite artışı, ek süre yok)
     const sampleWeights = cleanSamples.map((s) => {
-      return Math.max(0.15, s.features.confidence);
+      const confWeight = Math.max(0.15, s.features.confidence);
+      const dist = Math.sqrt(
+        (s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2
+      );
+      const spatialWeight = 1 + 0.6 * (dist / screenDiag);
+      return confWeight * spatialWeight;
     });
 
-    // Cross-validation ile en iyi lambda seç
-    const lambdaCandidates = [0.001, 0.004, 0.008, 0.02, 0.05, 0.1];
+    // Leave-one-group-out CV ile en iyi lambda seç
+    // Rastgele fold yerine kalibrasyon noktası bazlı fold → veri sızması yok, daha güvenilir
+    const lambdaCandidates = [0.0005, 0.001, 0.002, 0.004, 0.008, 0.015, 0.02, 0.05, 0.1];
     let bestLambda = this.lambda;
     let bestCV = Infinity;
-    // 5-fold cross-validation
-    const foldSize = Math.floor(polyFeatures.length / 5);
-    if (foldSize >= 10) {
+
+    // Örnekleri hedef noktalarına göre grupla
+    const pointGroups = new Map<string, number[]>();
+    for (let i = 0; i < cleanSamples.length; i++) {
+      const key = `${cleanSamples[i].targetX.toFixed(0)}_${cleanSamples[i].targetY.toFixed(0)}`;
+      if (!pointGroups.has(key)) pointGroups.set(key, []);
+      pointGroups.get(key)!.push(i);
+    }
+    const groupKeys = Array.from(pointGroups.keys());
+
+    if (groupKeys.length >= 5) {
       for (const lam of lambdaCandidates) {
         let totalErr = 0;
         let count = 0;
-        for (let fold = 0; fold < 5; fold++) {
-          const valStart = fold * foldSize;
-          const valEnd = fold === 4 ? polyFeatures.length : (fold + 1) * foldSize;
-          const trainPoly = [...polyFeatures.slice(0, valStart), ...polyFeatures.slice(valEnd)];
-          const trainTX = [...targetsX.slice(0, valStart), ...targetsX.slice(valEnd)];
-          const trainTY = [...targetsY.slice(0, valStart), ...targetsY.slice(valEnd)];
-          const trainW = [...sampleWeights.slice(0, valStart), ...sampleWeights.slice(valEnd)];
+        for (const holdoutKey of groupKeys) {
+          const holdoutIndices = new Set(pointGroups.get(holdoutKey)!);
+          const trainPoly: number[][] = [];
+          const trainTX: number[] = [];
+          const trainTY: number[] = [];
+          const trainW: number[] = [];
+          for (let i = 0; i < polyFeatures.length; i++) {
+            if (!holdoutIndices.has(i)) {
+              trainPoly.push(polyFeatures[i]);
+              trainTX.push(targetsX[i]);
+              trainTY.push(targetsY[i]);
+              trainW.push(sampleWeights[i]);
+            }
+          }
+          if (trainPoly.length < 40) continue;
           const wx = ridgeRegression(trainPoly, trainTX, lam, trainW);
           const wy = ridgeRegression(trainPoly, trainTY, lam, trainW);
-          for (let i = valStart; i < valEnd; i++) {
+          for (const idx of Array.from(holdoutIndices)) {
             let px = 0, py = 0;
-            for (let j = 0; j < polyFeatures[i].length; j++) {
-              px += polyFeatures[i][j] * (wx[j] || 0);
-              py += polyFeatures[i][j] * (wy[j] || 0);
+            for (let j = 0; j < polyFeatures[idx].length; j++) {
+              px += polyFeatures[idx][j] * (wx[j] || 0);
+              py += polyFeatures[idx][j] * (wy[j] || 0);
             }
-            totalErr += Math.sqrt((px - targetsX[i]) ** 2 + (py - targetsY[i]) ** 2);
+            totalErr += Math.sqrt((px - targetsX[idx]) ** 2 + (py - targetsY[idx]) ** 2);
             count++;
           }
         }
+        if (count === 0) continue;
         const avgErr = totalErr / count;
         if (avgErr < bestCV) {
           bestCV = avgErr;
           bestLambda = lam;
         }
       }
-      logger.log("[GazeModel] CV en iyi lambda:", bestLambda, "| CV hata:", bestCV.toFixed(1));
+      logger.log("[GazeModel] LOGO-CV en iyi lambda:", bestLambda, "| CV hata:", bestCV.toFixed(1));
     }
     this.lambda = bestLambda;
 
@@ -531,13 +563,6 @@ export class GazeModel {
 
     // Pozisyon-normalizeli residual hesabı: kenar noktalar doğal olarak daha yüksek
     // hataya sahip, bu yüzden onları orantısız atmamak için normalize ediyoruz
-    const screenCenterX = targetsX.reduce((s, v) => s + v, 0) / targetsX.length;
-    const screenCenterY = targetsY.reduce((s, v) => s + v, 0) / targetsY.length;
-    const screenDiag = Math.sqrt(
-      Math.max(...targetsX.map(x => (x - screenCenterX) ** 2)) +
-      Math.max(...targetsY.map(y => (y - screenCenterY) ** 2))
-    ) || 1;
-
     const residuals = cleanSamples.map((s, i) => {
       const pred = this.predictRaw(s.features);
       const rawErr = pred
@@ -551,7 +576,7 @@ export class GazeModel {
       return { i, err: rawErr / edgeFactor };
     });
     residuals.sort((a, b) => b.err - a.err);
-    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.10), Math.max(0, cleanSamples.length - 72));
+    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.12), Math.max(0, cleanSamples.length - 80));
     const dropSet = new Set(residuals.slice(0, dropCount).map((r) => r.i));
     if (dropCount > 0) {
       const cleanSamples2 = cleanSamples.filter((_, i) => !dropSet.has(i));

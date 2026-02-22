@@ -166,7 +166,7 @@ export default function Calibration({
     const errors: number[] = [];
     const predSums: { predX: number; predY: number; count: number } = { predX: 0, predY: 0, count: 0 };
     let sampleCount = 0;
-    const targetSamples = 35;
+    const targetSamples = 40;
     let settleCount = 0;
     const fps = faceTracker.getFPS() || 30;
     const settleFrames = Math.round(fps * 1.5);
