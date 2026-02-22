@@ -93,6 +93,8 @@ export class FaceTracker {
   private lastFpsTime: number = 0;
   private animFrameId: number = 0;
   private cameraInitialized: boolean = false;
+  private consecutiveErrors: number = 0;
+  private readonly MAX_CONSECUTIVE_ERRORS = 5;
 
   /** Göz bölgesi zoom: önceki karenin göz bölgesini kırpıp büyüterek iris için daha fazla piksel. */
   private zoomCanvas: HTMLCanvasElement | null = null;
@@ -209,6 +211,7 @@ export class FaceTracker {
 
     this.faceMesh.onResults((results: import("@/types/mediapipe").MediaPipeFaceMeshResults) => {
       this.isProcessingFrame = false;
+      this.consecutiveErrors = 0;
       try {
         this.processResults(results);
       } catch (e) {
@@ -219,17 +222,35 @@ export class FaceTracker {
 
     // Modelin ilk yüklenmesini tetikle — warm-up frame ile WASM indirilir
     logger.log("[FaceTracker] FaceMesh modeli yükleniyor...");
-    try {
-      if (this.videoElement && this.videoElement.readyState >= 2) {
-        await this.faceMesh.send({ image: this.videoElement });
+    let warmupOk = false;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        if (this.videoElement && this.videoElement.readyState >= 2) {
+          await this.faceMesh.send({ image: this.videoElement });
+          warmupOk = true;
+          break;
+        } else {
+          // Video henüz hazır değil — kısa bekle ve tekrar dene
+          await new Promise(r => setTimeout(r, 500));
+          if (this.videoElement && this.videoElement.readyState >= 2) {
+            await this.faceMesh.send({ image: this.videoElement });
+            warmupOk = true;
+            break;
+          }
+        }
+      } catch (e) {
+        logger.warn(`[FaceTracker] Warm-up denemesi ${attempt + 1}/3 başarısız:`, e);
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1000));
       }
-    } catch (e) {
-      logger.warn("[FaceTracker] İlk frame gönderimi başarısız (devam ediliyor):", e);
     }
 
-    // Warm-up başarısız olsa bile model hazır — processFrame döngüsünde tekrar denenir
+    if (!warmupOk) {
+      logger.error("[FaceTracker] FaceMesh warm-up 3 denemede başarısız. WASM dosyaları yüklenememiş olabilir.");
+    }
+
     this.isModelReady = true;
-    logger.log("[FaceTracker] FaceMesh modeli hazır");
+    this.consecutiveErrors = 0;
+    logger.log("[FaceTracker] FaceMesh modeli hazır (warmup:", warmupOk ? "başarılı" : "atlandı", ")");
   }
 
   /**
@@ -343,7 +364,8 @@ export class FaceTracker {
     if (
       this.videoElement.readyState >= 2 &&
       this.isModelReady &&
-      !this.isProcessingFrame
+      !this.isProcessingFrame &&
+      this.consecutiveErrors < this.MAX_CONSECUTIVE_ERRORS
     ) {
       try {
         this.isProcessingFrame = true;
@@ -390,9 +412,15 @@ export class FaceTracker {
           await this.faceMesh.send({ image: this.videoElement });
         }
         this.lastFrameUsedZoom = sent;
+        this.consecutiveErrors = 0;
       } catch (e) {
         this.isProcessingFrame = false;
-        logger.warn("[FaceTracker] Frame gönderim hatası:", e);
+        this.consecutiveErrors++;
+        if (this.consecutiveErrors >= this.MAX_CONSECUTIVE_ERRORS) {
+          logger.error("[FaceTracker] Ardışık", this.consecutiveErrors, "hata — frame gönderimi durduruldu. MediaPipe WASM yüklenememiş olabilir.");
+        } else {
+          logger.warn("[FaceTracker] Frame gönderim hatası (", this.consecutiveErrors, "/", this.MAX_CONSECUTIVE_ERRORS, "):", e);
+        }
       }
     }
 
@@ -818,6 +846,7 @@ export class FaceTracker {
     this.faceMesh = null;
     this.isModelReady = false;
     this.cameraInitialized = false;
+    this.consecutiveErrors = 0;
 
     if (this.zoomCanvas) {
       this.zoomCanvas.width = 0;
