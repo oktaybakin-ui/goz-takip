@@ -27,7 +27,7 @@ export default function Calibration({
   onCancel,
 }: CalibrationProps) {
   const [state, setState] = useState<CalibrationState | null>(null);
-  const [countdown, setCountdown] = useState(3);
+  const [countdown, setCountdown] = useState(2);
   const [sampleProgress, setSampleProgress] = useState(0);
   const [currentPoint, setCurrentPoint] = useState<CalibrationPoint | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -39,6 +39,7 @@ export default function Calibration({
   const animFrameRef = useRef<number>(0);
   const validationErrorsRef = useRef<number[]>([]);
   const validationBiasesRef = useRef<{ biasX: number; biasY: number; relX: number; relY: number }[]>([]);
+  const affinePointsRef = useRef<{ predX: number; predY: number; trueX: number; trueY: number }[]>([]);
   const validationPointRef = useRef<{ relX: number; relY: number } | null>(null);
   const phaseRef = useRef<string>("idle");
   const [storedInfo, setStoredInfo] = useState<ReturnType<typeof loadCalibration>>(null);
@@ -135,6 +136,7 @@ export default function Calibration({
           phaseRef.current = "validating";
           validationErrorsRef.current = [];
           validationBiasesRef.current = [];
+          affinePointsRef.current = [];
           startPointCollection(manager, true);
         }
         return;
@@ -148,22 +150,33 @@ export default function Calibration({
 
   startCalibrationSamplingRef.current = startCalibrationSampling;
 
-  // Doğrulama veri toplama döngüsü
   const startValidationSampling = useCallback((manager: CalibrationManager) => {
     const errors: number[] = [];
+    const predSums: { predX: number; predY: number; count: number } = { predX: 0, predY: 0, count: 0 };
     let sampleCount = 0;
-    const targetSamples = 40;
+    const targetSamples = 35;
     let settleCount = 0;
     const fps = faceTracker.getFPS() || 30;
     const settleFrames = Math.round(fps * 1.5);
     const validationStartTime = Date.now();
-    const VALIDATION_TIMEOUT_MS = 15000;
+    const VALIDATION_TIMEOUT_MS = 12000;
 
     const finishValidationPoint = () => {
       const avgError = errors.length > 0
         ? errors.reduce((s, e) => s + e, 0) / errors.length
         : 999;
       validationErrorsRef.current.push(avgError);
+
+      // Afin düzeltme için her doğrulama noktasının ortalama tahmini ve gerçek pozisyonu
+      const valPt = manager.getCurrentValidationPoint();
+      if (valPt && predSums.count > 0) {
+        affinePointsRef.current.push({
+          predX: predSums.predX / predSums.count,
+          predY: predSums.predY / predSums.count,
+          trueX: valPt.x,
+          trueY: valPt.y,
+        });
+      }
 
       const hasMore = manager.nextValidationPoint();
       if (hasMore) {
@@ -176,37 +189,19 @@ export default function Calibration({
         const meanError = allErrors.length > 0
           ? allErrors.reduce((s, e) => s + e, 0) / allErrors.length
           : 999;
-        const biasSamples = validationBiasesRef.current;
-        let meanBiasX = 0;
-        let meanBiasY = 0;
-        if (biasSamples.length > 0) {
-          let sumW = 0;
-          let sumWx = 0;
-          let sumWy = 0;
-          for (const s of biasSamples) {
-            const dist = Math.sqrt((s.relX - 0.5) ** 2 + (s.relY - 0.5) ** 2);
-            const w = 1 / (1 + dist);
-            sumW += w;
-            sumWx += s.biasX * w;
-            sumWy += s.biasY * w;
-          }
-          meanBiasX = sumW > 0 ? sumWx / sumW : 0;
-          meanBiasY = sumW > 0 ? sumWy / sumW : 0;
-        }
-        logger.log("[Calibration] Doğrulama tamamlandı, ortalama hata:", Math.round(meanError), "px, merkez-ağırlıklı bias:", Math.round(meanBiasX), ",", Math.round(meanBiasY));
-        manager.completeValidation(meanError, meanBiasX, meanBiasY);
+
+        logger.log("[Calibration] Doğrulama tamamlandı, ortalama hata:", Math.round(meanError), "px,", affinePointsRef.current.length, "afin nokta");
+        manager.completeValidation(meanError, undefined, undefined, affinePointsRef.current);
       }
     };
 
     const validationLoop = () => {
-      // Settle time: ilk N frame'i atla
       if (settleCount < settleFrames) {
         settleCount++;
         animFrameRef.current = requestAnimationFrame(validationLoop);
         return;
       }
 
-      // Zaman aşımı: aynı noktada 15 sn geçtiyse sonraki noktaya geç (takılmayı önle)
       if (Date.now() - validationStartTime > VALIDATION_TIMEOUT_MS) {
         finishValidationPoint();
         return;
@@ -229,6 +224,13 @@ export default function Calibration({
             relX: pt.relX,
             relY: pt.relY,
           });
+          // Afin hesabı için tahmin koordinatlarını biriktir
+          const valPoint = manager.getCurrentValidationPoint();
+          if (valPoint) {
+            predSums.predX += valPoint.x - result.biasX;
+            predSums.predY += valPoint.y - result.biasY;
+            predSums.count++;
+          }
           sampleCount++;
           setSampleProgress((sampleCount / targetSamples) * 100);
         }
@@ -480,7 +482,7 @@ export default function Calibration({
             <p className="text-gray-500 text-xs">
               {state.phase === "calibrating"
                 ? `Nokta ${state.currentPointIndex + 1} / ${state.totalPoints}`
-                : `Doğrulama ${state.currentPointIndex + 1} / 5`}
+                : `Doğrulama ${state.currentPointIndex + 1} / 9`}
             </p>
 
             {/* Uyarı */}

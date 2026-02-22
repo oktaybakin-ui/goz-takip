@@ -11,7 +11,7 @@
  * Kamera bağlantısını korur, tracking durduğunda stream kesilmez.
  */
 
-import { EyeFeatures, OneEuroFilter } from "./gazeModel";
+import { EyeFeatures } from "./gazeModel";
 import { logger } from "./logger";
 
 // MediaPipe landmark indeksleri
@@ -108,41 +108,9 @@ export class FaceTracker {
   private irisOffsetLeft: { x: number; y: number } = { x: 0, y: 0 };
   private irisOffsetRight: { x: number; y: number } = { x: 0, y: 0 };
 
-  // Raw landmark stabilizasyonu - iris landmark jitter'ını kaynağında filtrele
-  // Her iris merkezi (x,y) ve göz köşesi (x,y) için ayrı filtre
-  private landmarkFilters: {
-    leftIrisX: OneEuroFilter;
-    leftIrisY: OneEuroFilter;
-    rightIrisX: OneEuroFilter;
-    rightIrisY: OneEuroFilter;
-    leftInnerX: OneEuroFilter;
-    leftInnerY: OneEuroFilter;
-    leftOuterX: OneEuroFilter;
-    leftOuterY: OneEuroFilter;
-    rightInnerX: OneEuroFilter;
-    rightInnerY: OneEuroFilter;
-    rightOuterX: OneEuroFilter;
-    rightOuterY: OneEuroFilter;
-    leftTopY: OneEuroFilter;
-    leftBottomY: OneEuroFilter;
-    rightTopY: OneEuroFilter;
-    rightBottomY: OneEuroFilter;
-  };
-
   constructor() {
-    // İris filtreleri: hızlı tepki (saccade kaçırılmasın), göz köşeleri daha kararlı
-    const mkIris = () => new OneEuroFilter(5.0, 0.08, 1.0);
-    const mkCorner = () => new OneEuroFilter(3.5, 0.05, 1.0);
-    this.landmarkFilters = {
-      leftIrisX: mkIris(), leftIrisY: mkIris(),
-      rightIrisX: mkIris(), rightIrisY: mkIris(),
-      leftInnerX: mkCorner(), leftInnerY: mkCorner(),
-      leftOuterX: mkCorner(), leftOuterY: mkCorner(),
-      rightInnerX: mkCorner(), rightInnerY: mkCorner(),
-      rightOuterX: mkCorner(), rightOuterY: mkCorner(),
-      leftTopY: mkCorner(), leftBottomY: mkCorner(),
-      rightTopY: mkCorner(), rightBottomY: mkCorner(),
-    };
+    // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter
+    // tek başına yeterli (çift filtreleme ~80ms gecikme ekliyordu)
   }
 
   /**
@@ -526,42 +494,14 @@ export class FaceTracker {
   }
 
   private extractFeatures(landmarks: FaceLandmark[]): EyeFeatures {
-    const now = performance.now();
-    const f = this.landmarkFilters;
-
-    // İris merkezi: 5 iris landmark'ının centroid'i (tek noktadan daha hassas göz bebeği)
+    // Ham iris merkezi: 5 iris landmark'ının centroid'i
+    // Landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter yeterli
     const leftIrisRaw = this.getIrisCenter(landmarks, LEFT_EYE_INDICES);
     const rightIrisRaw = this.getIrisCenter(landmarks, RIGHT_EYE_INDICES);
-    const leftIrisFiltered = {
-      x: f.leftIrisX.filter(leftIrisRaw.x, now),
-      y: f.leftIrisY.filter(leftIrisRaw.y, now),
-    };
-    const rightIrisFiltered = {
-      x: f.rightIrisX.filter(rightIrisRaw.x, now),
-      y: f.rightIrisY.filter(rightIrisRaw.y, now),
-    };
-    // Göz köşeleri de stabilize et
-    const lIn = landmarks[LEFT_EYE_INDICES.innerCorner];
-    const lOut = landmarks[LEFT_EYE_INDICES.outerCorner];
-    const rIn = landmarks[RIGHT_EYE_INDICES.innerCorner];
-    const rOut = landmarks[RIGHT_EYE_INDICES.outerCorner];
-    if (lIn) { lIn.x = f.leftInnerX.filter(lIn.x, now); lIn.y = f.leftInnerY.filter(lIn.y, now); }
-    if (lOut) { lOut.x = f.leftOuterX.filter(lOut.x, now); lOut.y = f.leftOuterY.filter(lOut.y, now); }
-    if (rIn) { rIn.x = f.rightInnerX.filter(rIn.x, now); rIn.y = f.rightInnerY.filter(rIn.y, now); }
-    if (rOut) { rOut.x = f.rightOuterX.filter(rOut.x, now); rOut.y = f.rightOuterY.filter(rOut.y, now); }
-    // Üst/alt kapak Y
-    const lTop = landmarks[LEFT_EYE_INDICES.topMid];
-    const lBot = landmarks[LEFT_EYE_INDICES.bottomMid];
-    const rTop = landmarks[RIGHT_EYE_INDICES.topMid];
-    const rBot = landmarks[RIGHT_EYE_INDICES.bottomMid];
-    if (lTop) lTop.y = f.leftTopY.filter(lTop.y, now);
-    if (lBot) lBot.y = f.leftBottomY.filter(lBot.y, now);
-    if (rTop) rTop.y = f.rightTopY.filter(rTop.y, now);
-    if (rBot) rBot.y = f.rightBottomY.filter(rBot.y, now);
 
-    // Filtrelenmiş iris + kullanıcı manuel offset (kalibrasyon öncesi hizalama)
-    let leftIris = { x: leftIrisFiltered.x + this.irisOffsetLeft.x, y: leftIrisFiltered.y + this.irisOffsetLeft.y };
-    let rightIris = { x: rightIrisFiltered.x + this.irisOffsetRight.x, y: rightIrisFiltered.y + this.irisOffsetRight.y };
+    // Kullanıcı manuel offset (kalibrasyon öncesi hizalama)
+    const leftIris = { x: leftIrisRaw.x + this.irisOffsetLeft.x, y: leftIrisRaw.y + this.irisOffsetLeft.y };
+    const rightIris = { x: rightIrisRaw.x + this.irisOffsetRight.x, y: rightIrisRaw.y + this.irisOffsetRight.y };
 
     // Göreceli iris pozisyonu (düzeltilmiş merkezden; göz konturu içinde 0-1)
     const leftRel = this.getRelativeIrisFromPoint(leftIris, landmarks, LEFT_EYE_INDICES);
@@ -886,9 +826,6 @@ export class FaceTracker {
       this.zoomCanvas.height = 0;
       this.zoomCanvas = null;
     }
-
-    // Landmark filtrelerini sıfırla
-    Object.values(this.landmarkFilters).forEach(f => f.reset());
 
     logger.log("[FaceTracker] Tamamen kapatıldı");
   }

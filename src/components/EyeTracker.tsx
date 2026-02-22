@@ -148,6 +148,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const drawAnimRef = useRef<number>(0);
   const lastUiUpdateRef = useRef<number>(0);
   const lastRawScreenPointRef = useRef<{ x: number; y: number } | null>(null);
+  const showTransitionOverlayRef = useRef(false);
+  const lastFeatureTimestampRef = useRef(0);
   const GAZE_UI_THROTTLE_MS = 80;
 
   const imageCount = imageUrls.length;
@@ -250,6 +252,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         setPhase("pupil_align");
       } catch (err) {
         if (!mounted) return;
+        // Başarısız başlatma durumunda kamera stream'ini temizle
+        try { faceTrackerRef.current.destroy(); } catch { /* ignore */ }
+        cameraInitializedRef.current = false;
+
         const msg = (err as Error).message;
         if (msg.includes("MediaPipe") || msg.includes("yüklenemedi")) {
           setError("Göz takip modeli yüklenemedi. İnternet bağlantınızı kontrol edin ve sayfayı yenileyin.");
@@ -334,6 +340,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     });
   }, [isMultiImage, isTracking, trackingDuration, currentImageIndex, imageUrls, imageDimensions]);
 
+  // Geçiş overlay ref'ini state ile senkronize et (tracking callback state okuyamaz)
+  useEffect(() => {
+    showTransitionOverlayRef.current = showTransitionOverlay;
+  }, [showTransitionOverlay]);
+
   // Geçiş overlay'ini 1.2 saniye sonra kapat
   useEffect(() => {
     if (!showTransitionOverlay) return;
@@ -402,12 +413,19 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       debugCounter++;
       const shouldLog = debugCounter % debugInterval === 1;
 
+      // Geçiş overlay aktifken veri toplama (kirlilik önleme)
+      if (showTransitionOverlayRef.current) return;
+
       if (!modelRef.current.isTrained()) {
         if (shouldLog) logger.warn("[Tracking] Model eğitilmemiş!");
         return;
       }
 
-      // Yüz/iris yeterince görünür olsun; eşik düşük tutulur ki veri toplanabilsin
+      // Aynı kameradan gelen tekrarlı frame'leri atla (30fps kamera, 60fps rAF)
+      const featureTimestamp = performance.now();
+      if (featureTimestamp - lastFeatureTimestampRef.current < 15) return;
+      lastFeatureTimestampRef.current = featureTimestamp;
+
       if (features.confidence < 0.15 || features.eyeOpenness < 0.02) {
         if (shouldLog) logger.log("[Tracking] Düşük confidence/eyeOpenness:", features.confidence.toFixed(2), features.eyeOpenness.toFixed(3));
         return;
@@ -443,14 +461,21 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
           const py = screenPoint.y;
           const overX = px < left ? left - px : px > right ? px - right : 0;
           const overY = py < top ? top - py : py > bottom ? py - bottom : 0;
+
           if (overX > 0 || overY > 0) {
-            screenPoint.x = Math.max(left, Math.min(right, px));
-            screenPoint.y = Math.max(top, Math.min(bottom, py));
-            // İçerik dışına çıkış mesafesine göre confidence düşür
             const diagSize = Math.sqrt(content.contentW ** 2 + content.contentH ** 2);
             const overDist = Math.sqrt(overX ** 2 + overY ** 2);
-            const penalty = Math.min(1, overDist / (diagSize * 0.15));
-            screenPoint.confidence *= (1 - penalty * 0.7);
+
+            // %10'dan fazla dışarıdaysa tamamen reddet (kenar fiksasyon şişirmesini önle)
+            if (overDist > diagSize * 0.10) {
+              if (shouldLog) logger.log("[Tracking] İçerik dışı nokta reddedildi:", Math.round(overDist), "px dışarıda");
+              return;
+            }
+
+            screenPoint.x = Math.max(left, Math.min(right, px));
+            screenPoint.y = Math.max(top, Math.min(bottom, py));
+            const penalty = Math.min(1, overDist / (diagSize * 0.10));
+            screenPoint.confidence *= (1 - penalty * 0.8);
           }
         }
       }

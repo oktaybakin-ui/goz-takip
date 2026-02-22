@@ -66,12 +66,12 @@ export interface FixationMetrics {
  */
 export class FixationDetector {
   // I-VT parametreleri
-  private velocityThreshold: number; // piksel/saniye
-  private minFixationDuration: number; // ms
-  private maxFixationRadius: number; // piksel
+  private velocityThreshold: number;
+  private minFixationDuration: number;
+  private maxFixationRadius: number;
 
   // DBSCAN parametreleri
-  private dbscanEps: number; // piksel
+  private dbscanEps: number;
   private dbscanMinPts: number;
 
   // Gaze verileri
@@ -84,14 +84,20 @@ export class FixationDetector {
   private currentFixationPoints: GazePoint[] = [];
 
   private lastValidTimestamp: number = 0;
-  private readonly BLINK_GAP_MS = 80;
+  private readonly BLINK_GAP_MS = 100; // Gerçek göz kırpma ~100-400ms
+  private readonly POST_BLINK_REJECT = 2; // Göz kırpma sonrası atlanacak frame sayısı
+  private postBlinkCounter: number = 0;
+
+  // Kayan pencere hız hesabı için son noktalar
+  private readonly VELOCITY_WINDOW = 3;
+  private recentValidPoints: GazePoint[] = [];
 
   constructor(
-    velocityThreshold: number = 50,     // piksel/saniye – mikrosakkad eşiği (eski: 82 çok yüksek)
-    minFixationDuration: number = 100,  // ms – kısa bakışları da say
-    maxFixationRadius: number = 38,    // piksel – daha hassas fixation sınırı
-    dbscanEps: number = 35,            // piksel – daha sıkı ROI kümeleri (eski: 50 çok geniş)
-    dbscanMinPts: number = 5           // Minimum nokta – gürültü azaltma (eski: 3 çok düşük)
+    velocityThreshold: number = 55,
+    minFixationDuration: number = 100,
+    maxFixationRadius: number = 40,
+    dbscanEps: number = 35,
+    dbscanMinPts: number = 5
   ) {
     this.velocityThreshold = velocityThreshold;
     this.minFixationDuration = minFixationDuration;
@@ -100,12 +106,14 @@ export class FixationDetector {
     this.dbscanMinPts = dbscanMinPts;
   }
 
-  /** Gaze listesini sıfırlar ve yeni oturum başlatır. */
   startTracking(): void {
     this.gazePoints = [];
     this.fixations = [];
     this.saccades = [];
     this.currentFixationPoints = [];
+    this.recentValidPoints = [];
+    this.postBlinkCounter = 0;
+    this.lastValidTimestamp = 0;
     this.trackingStartTime = performance.now();
   }
 
@@ -119,57 +127,79 @@ export class FixationDetector {
 
     if (point.confidence < 0.3) return null;
 
+    // Göz kırpma boşluğu tespiti (100-400ms)
     if (this.lastValidTimestamp > 0) {
       const gap = point.timestamp - this.lastValidTimestamp;
       if (gap > this.BLINK_GAP_MS && gap < 400) {
+        this.postBlinkCounter = this.POST_BLINK_REJECT;
         return null;
       }
     }
+
+    // Göz kırpma sonrası ilk N frame'i atla (sakkadik toparlanma)
+    if (this.postBlinkCounter > 0) {
+      this.postBlinkCounter--;
+      this.lastValidTimestamp = point.timestamp;
+      return null;
+    }
+
     this.lastValidTimestamp = point.timestamp;
+
+    // Kayan pencere için geçerli noktaları tut
+    this.recentValidPoints.push(point);
+    if (this.recentValidPoints.length > this.VELOCITY_WINDOW + 1) {
+      this.recentValidPoints.shift();
+    }
 
     if (this.currentFixationPoints.length === 0) {
       this.currentFixationPoints.push(point);
       return null;
     }
 
-    // Mevcut fixation merkezini hesapla
-    const centerX =
-      this.currentFixationPoints.reduce((s, p) => s + p.x, 0) /
-      this.currentFixationPoints.length;
-    const centerY =
-      this.currentFixationPoints.reduce((s, p) => s + p.y, 0) /
-      this.currentFixationPoints.length;
+    // Güven-ağırlıklı fixation merkezi
+    let sumCW = 0, sumCX = 0, sumCY = 0;
+    for (const p of this.currentFixationPoints) {
+      const w = Math.max(0.1, p.confidence);
+      sumCW += w;
+      sumCX += p.x * w;
+      sumCY += p.y * w;
+    }
+    const centerX = sumCW > 0 ? sumCX / sumCW : this.currentFixationPoints[0].x;
+    const centerY = sumCW > 0 ? sumCY / sumCW : this.currentFixationPoints[0].y;
 
-    // Son noktadan hız hesapla
+    // Kayan pencere hız hesabı: tek frame yerine W frame üzerinden
+    // Bu gürültüyü ortalayarak daha kararlı fiksasyon sınıflandırması sağlar
+    let velocity = 0;
+    if (this.recentValidPoints.length >= 2) {
+      const windowStart = this.recentValidPoints[0];
+      const dtWindow = (point.timestamp - windowStart.timestamp) / 1000;
+      if (dtWindow > 0.001) {
+        const distWindow = Math.sqrt(
+          (point.x - windowStart.x) ** 2 + (point.y - windowStart.y) ** 2
+        );
+        velocity = distWindow / dtWindow;
+      }
+    }
+
     const lastPoint = this.currentFixationPoints[this.currentFixationPoints.length - 1];
-    const dt = (point.timestamp - lastPoint.timestamp) / 1000; // saniye
-    // dt <= 0 veya çok küçükse (aynı frame veya zamanlama hatası) bu noktayı fixation'a ekle
+    const dt = (point.timestamp - lastPoint.timestamp) / 1000;
     if (dt <= 0.001) {
       this.currentFixationPoints.push(point);
       return null;
     }
 
-    const dx = point.x - lastPoint.x;
-    const dy = point.y - lastPoint.y;
-    const distance = Math.sqrt(dx * dx + dy * dy);
-    const velocity = distance / dt;
-
-    // Merkezden uzaklık
     const distFromCenter = Math.sqrt(
       (point.x - centerX) ** 2 + (point.y - centerY) ** 2
     );
 
     if (velocity < this.velocityThreshold && distFromCenter < this.maxFixationRadius) {
-      // Hâlâ fixation içindeyiz
       this.currentFixationPoints.push(point);
       return null;
     } else {
-      // Fixation bitti, yeni başlıyor
       const completedFixation = this.finalizeFixation();
       this.currentFixationPoints = [point];
 
       if (completedFixation && lastPoint) {
-        // Saccade kaydet
         this.saccades.push({
           startX: completedFixation.x,
           startY: completedFixation.y,
@@ -185,7 +215,6 @@ export class FixationDetector {
     }
   }
 
-  // Mevcut fixation'ı sonlandır
   private finalizeFixation(): Fixation | null {
     if (this.currentFixationPoints.length < 2) return null;
 
@@ -195,20 +224,24 @@ export class FixationDetector {
 
     if (duration < this.minFixationDuration) return null;
 
+    // Güven-ağırlıklı merkez hesabı (yüksek güvenli noktalar daha etkili)
+    let sumW = 0, sumX = 0, sumY = 0, sumC = 0;
+    for (const p of this.currentFixationPoints) {
+      const w = Math.max(0.1, p.confidence);
+      sumW += w;
+      sumX += p.x * w;
+      sumY += p.y * w;
+      sumC += p.confidence;
+    }
+
     const fixation: Fixation = {
-      x:
-        this.currentFixationPoints.reduce((s, p) => s + p.x, 0) /
-        this.currentFixationPoints.length,
-      y:
-        this.currentFixationPoints.reduce((s, p) => s + p.y, 0) /
-        this.currentFixationPoints.length,
+      x: sumW > 0 ? sumX / sumW : this.currentFixationPoints[0].x,
+      y: sumW > 0 ? sumY / sumW : this.currentFixationPoints[0].y,
       startTime: firstPoint.timestamp,
       endTime: lastPoint.timestamp,
       duration,
       pointCount: this.currentFixationPoints.length,
-      avgConfidence:
-        this.currentFixationPoints.reduce((s, p) => s + p.confidence, 0) /
-        this.currentFixationPoints.length,
+      avgConfidence: sumC / this.currentFixationPoints.length,
     };
 
     this.fixations.push(fixation);

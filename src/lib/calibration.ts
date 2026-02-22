@@ -47,7 +47,8 @@ export interface StabilityCheck {
 }
 
 /**
- * 25 noktalı (5×5) kalibrasyon grid'i – daha iyi ekran kapsamı, daha düşük hata.
+ * 25 noktalı (5×5) kalibrasyon grid'i — serpantin (yılan) sıralaması.
+ * Rastgele sıraya göre göz hareketi çok daha az, kullanıcı deneyimi iyileşir.
  */
 export function generateCalibrationPoints(
   screenWidth: number,
@@ -59,7 +60,9 @@ export function generateCalibrationPoints(
   const cols = 5;
   const rows = 5;
   for (let row = 0; row < rows; row++) {
-    for (let col = 0; col < cols; col++) {
+    const isEvenRow = row % 2 === 0;
+    for (let ci = 0; ci < cols; ci++) {
+      const col = isEvenRow ? ci : cols - 1 - ci;
       const relX = cols > 1 ? col / (cols - 1) : 0.5;
       const relY = rows > 1 ? row / (rows - 1) : 0.5;
       const x = padding + relX * (screenWidth - 2 * padding);
@@ -67,15 +70,12 @@ export function generateCalibrationPoints(
       points.push({ id: id++, x, y, relX, relY });
     }
   }
-  return shuffleArray(points);
+  return points;
 }
 
 /**
- * 5 noktalı doğrulama noktaları (merkez + 4 köşe). Kalibrasyon sonrası hata ölçümü için kullanılır.
- * @param screenWidth - Viewport genişliği (px)
- * @param screenHeight - Viewport yüksekliği (px)
- * @param padding - Kenar boşluğu (px)
- * @returns Doğrulama noktaları
+ * 9 noktalı doğrulama (merkez + 4 köşe + 4 kenar ortası).
+ * 9 nokta afin düzeltme için yeterli veri sağlar ve bölgesel hata tespiti yapar.
  */
 export function generateValidationPoints(
   screenWidth: number,
@@ -88,6 +88,10 @@ export function generateValidationPoints(
     { relX: 0.8, relY: 0.2 },   // sağ üst
     { relX: 0.2, relY: 0.8 },   // sol alt
     { relX: 0.8, relY: 0.8 },   // sağ alt
+    { relX: 0.5, relY: 0.2 },   // üst orta
+    { relX: 0.5, relY: 0.8 },   // alt orta
+    { relX: 0.2, relY: 0.5 },   // sol orta
+    { relX: 0.8, relY: 0.5 },   // sağ orta
   ];
 
   return positions.map((pos, i) => ({
@@ -451,7 +455,12 @@ export class CalibrationManager {
     return true;
   }
 
-  completeValidation(meanError: number, meanBiasX?: number, meanBiasY?: number): void {
+  completeValidation(
+    meanError: number,
+    _meanBiasX?: number,
+    _meanBiasY?: number,
+    affinePoints?: { predX: number; predY: number; trueX: number; trueY: number }[]
+  ): void {
     const passed = meanError <= this.errorThreshold;
     this.updateState({
       phase: "complete",
@@ -461,8 +470,12 @@ export class CalibrationManager {
         ? `Ortalama hata: ${Math.round(meanError)} px - Başarılı!`
         : `Ortalama hata: ${Math.round(meanError)} px - Doğruluk düşük. Tekrar önerilir.`,
     });
-    if (typeof meanBiasX === "number" && typeof meanBiasY === "number") {
-      this.model.setInitialDriftOffset(meanBiasX, meanBiasY);
+
+    // Afin düzeltme: 3+ doğrulama noktası varsa afin, yoksa basit öteleme
+    if (affinePoints && affinePoints.length >= 3) {
+      this.model.setAffineCorrection(affinePoints);
+    } else if (typeof _meanBiasX === "number" && typeof _meanBiasY === "number") {
+      this.model.setInitialDriftOffset(_meanBiasX, _meanBiasY);
     }
   }
 

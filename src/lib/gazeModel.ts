@@ -50,27 +50,52 @@ export interface CalibrationSample {
   targetY: number;
 }
 
-// 2. derece polinom özellikleri
-// [1, x1, x2, ..., x1^2, x1*x2, ..., x2^2, ...]
-function createPolynomialFeatures(input: number[]): number[] {
+/**
+ * Seçici polinom özellik üreteci — 237 yerine ~80 özellik.
+ * Yalnızca anlamlı çapraz terimler üretilir:
+ *   - İris grubu (idx 0-5): tam kuadratik → 21 çapraz terim
+ *   - İris × Poz (idx 0-5 × 8-11): 24 çapraz terim (baş hareketi kompanzasyonu)
+ *   - Poz kendi içi (idx 8-11): 10 çapraz terim
+ *   - Kübik: ilk 4 iris özelliği (avgRelX/Y, leftIrisRelX/Y) → 4 terim
+ *   - Geri kalan: sadece lineer
+ * Toplam: 1 + 20 + 21 + 24 + 10 + 4 = 80
+ */
+function createSelectivePolynomialFeatures(input: number[]): number[] {
   const features: number[] = [1];
+
   for (const val of input) features.push(val);
-  for (let i = 0; i < input.length; i++) {
-    for (let j = i; j < input.length; j++) {
+
+  // Iris grubu kuadratik (avgRelX/Y, L/R irisRelX/Y) → idx 0-5
+  const irisEnd = Math.min(5, input.length - 1);
+  for (let i = 0; i <= irisEnd; i++) {
+    for (let j = i; j <= irisEnd; j++) {
       features.push(input[i] * input[j]);
     }
   }
-  return features;
-}
 
-/** 2. derece + iris ile ilgili 6 değişkende 3. derece terimler (daha hassas haritalama). */
-function createPolynomialFeaturesWithCubic(input: number[]): number[] {
-  const base = createPolynomialFeatures(input);
-  const cubicCount = Math.min(6, input.length); // avgRelX, avgRelY, L/R iris relX/relY
-  for (let i = 0; i < cubicCount; i++) {
-    base.push(input[i] * input[i] * input[i]);
+  // Iris × Pose çapraz (idx 0-5 × 8-11)
+  const poseStart = 8;
+  const poseEnd = Math.min(11, input.length - 1);
+  for (let i = 0; i <= irisEnd; i++) {
+    for (let j = poseStart; j <= poseEnd; j++) {
+      features.push(input[i] * input[j]);
+    }
   }
-  return base;
+
+  // Pose kendi kuadratiği (idx 8-11)
+  for (let i = poseStart; i <= poseEnd; i++) {
+    for (let j = i; j <= poseEnd; j++) {
+      features.push(input[i] * input[j]);
+    }
+  }
+
+  // Kübik: avgRelX, avgRelY, leftIrisRelX, leftIrisRelY
+  const cubicEnd = Math.min(3, input.length - 1);
+  for (let i = 0; i <= cubicEnd; i++) {
+    features.push(input[i] * input[i] * input[i]);
+  }
+
+  return features;
 }
 
 // Weighted Ridge Regression ile ağırlık hesapla
@@ -276,7 +301,13 @@ export class GazeModel {
   private filterX: OneEuroFilter;
   private filterY: OneEuroFilter;
 
-  // Drift correction
+  // Affine correction (6 parametre: ölçek, döndürme, kayma, öteleme — sadece ötelemeden çok daha doğru)
+  private affineCorrection: {
+    a11: number; a12: number; tx: number;
+    a21: number; a22: number; ty: number;
+  } | null = null;
+
+  // Basit drift fallback (affine yoksa)
   private driftOffsetX: number = 0;
   private driftOffsetY: number = 0;
 
@@ -289,9 +320,11 @@ export class GazeModel {
 
   constructor(lambda: number = 0.008) {
     this.lambda = lambda;
-    // OneEuro: X daha hızlı (yatay saccade sık), Y biraz daha yumuşak (dikey saccade nadir)
-    this.filterX = new OneEuroFilter(1.5, 0.05, 1.0);
-    this.filterY = new OneEuroFilter(1.2, 0.04, 1.0);
+    // Tek filtre katmanı (landmark filtreleri kaldırıldı)
+    // Daha yüksek minCutoff: hızlı saccade'lere daha duyarlı
+    // Daha yüksek beta: hız artınca cutoff hızla yükselir → gecikme azalır
+    this.filterX = new OneEuroFilter(2.0, 0.07, 1.0);
+    this.filterY = new OneEuroFilter(1.7, 0.06, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -439,18 +472,16 @@ export class GazeModel {
         const std = this.featureStds[i] || 1;
         return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
       });
-      polyFeatures.push(createPolynomialFeaturesWithCubic(normalized));
+      polyFeatures.push(createSelectivePolynomialFeatures(normalized));
     }
 
     // Hedef değerler
     const targetsX = cleanSamples.map((s) => s.targetX);
     const targetsY = cleanSamples.map((s) => s.targetY);
 
-    // Confidence-based sample weights
+    // Lineer confidence ağırlıklama (c^2 gürültülü güven skorlarında bias yaratır)
     const sampleWeights = cleanSamples.map((s) => {
-      // Confidence^2 kullan: yüksek confidence örnekleri çok daha değerli
-      const c = Math.max(0.1, s.features.confidence);
-      return c * c;
+      return Math.max(0.15, s.features.confidence);
     });
 
     // Cross-validation ile en iyi lambda seç
@@ -498,17 +529,29 @@ export class GazeModel {
 
     this.trained = true;
 
-    // Yüksek residual atıp 1 kez yeniden eğit (ölçülü outlier temizliği)
+    // Pozisyon-normalizeli residual hesabı: kenar noktalar doğal olarak daha yüksek
+    // hataya sahip, bu yüzden onları orantısız atmamak için normalize ediyoruz
+    const screenCenterX = targetsX.reduce((s, v) => s + v, 0) / targetsX.length;
+    const screenCenterY = targetsY.reduce((s, v) => s + v, 0) / targetsY.length;
+    const screenDiag = Math.sqrt(
+      Math.max(...targetsX.map(x => (x - screenCenterX) ** 2)) +
+      Math.max(...targetsY.map(y => (y - screenCenterY) ** 2))
+    ) || 1;
+
     const residuals = cleanSamples.map((s, i) => {
       const pred = this.predictRaw(s.features);
-      const err = pred
+      const rawErr = pred
         ? Math.sqrt((pred.x - s.targetX) ** 2 + (pred.y - s.targetY) ** 2)
         : 9999;
-      return { i, err };
+      // Kenar noktalar için tolerans artır (merkezden uzaklığa orantılı)
+      const distFromCenter = Math.sqrt(
+        (s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2
+      );
+      const edgeFactor = 1 + 0.5 * (distFromCenter / screenDiag);
+      return { i, err: rawErr / edgeFactor };
     });
     residuals.sort((a, b) => b.err - a.err);
-    // En kötü %12 örnekleri at (agresif atma model bias'ına yol açabilir)
-    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.12), Math.max(0, cleanSamples.length - 72));
+    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.10), Math.max(0, cleanSamples.length - 72));
     const dropSet = new Set(residuals.slice(0, dropCount).map((r) => r.i));
     if (dropCount > 0) {
       const cleanSamples2 = cleanSamples.filter((_, i) => !dropSet.has(i));
@@ -520,13 +563,12 @@ export class GazeModel {
           const std = this.featureStds[i] || 1;
           return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
         });
-        polyFeatures2.push(createPolynomialFeaturesWithCubic(normalized));
+        polyFeatures2.push(createSelectivePolynomialFeatures(normalized));
       }
       const targetsX2 = cleanSamples2.map((s) => s.targetX);
       const targetsY2 = cleanSamples2.map((s) => s.targetY);
       const sampleWeights2 = cleanSamples2.map((s) => {
-        const c = Math.max(0.1, s.features.confidence);
-        return c * c;
+        return Math.max(0.15, s.features.confidence);
       });
       this.weightsX = ridgeRegression(polyFeatures2, targetsX2, this.lambda, sampleWeights2);
       this.weightsY = ridgeRegression(polyFeatures2, targetsY2, this.lambda, sampleWeights2);
@@ -569,7 +611,7 @@ export class GazeModel {
       const std = this.featureStds[i] || 1;
       return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
     });
-    const poly = createPolynomialFeaturesWithCubic(normalized);
+    const poly = createSelectivePolynomialFeatures(normalized);
 
     let x = 0;
     let y = 0;
@@ -598,9 +640,17 @@ export class GazeModel {
 
     const now = performance.now();
 
-    // Drift correction uygula
-    const correctedX = raw.x + this.driftOffsetX;
-    const correctedY = raw.y + this.driftOffsetY;
+    // Affine veya drift correction uygula
+    let correctedX: number;
+    let correctedY: number;
+    if (this.affineCorrection) {
+      const { a11, a12, tx, a21, a22, ty } = this.affineCorrection;
+      correctedX = a11 * raw.x + a12 * raw.y + tx;
+      correctedY = a21 * raw.x + a22 * raw.y + ty;
+    } else {
+      correctedX = raw.x + this.driftOffsetX;
+      correctedY = raw.y + this.driftOffsetY;
+    }
 
     // Referans pozdan sapma büyükse confidence düşür (ekstrapolasyon güvensiz)
     let poseConfPenalty = 1.0;
@@ -686,12 +736,12 @@ export class GazeModel {
     this.driftOffsetY = alpha * (trueY - predictedY) + (1 - alpha) * this.driftOffsetY;
   }
 
-  // Filtreleri ve drift'i sıfırla
   resetSmoothing(): void {
     this.filterX.reset();
     this.filterY.reset();
     this.driftOffsetX = 0;
     this.driftOffsetY = 0;
+    this.affineCorrection = null;
     this.predictionHistory = [];
   }
 
@@ -699,6 +749,67 @@ export class GazeModel {
   setInitialDriftOffset(meanBiasX: number, meanBiasY: number): void {
     this.driftOffsetX = meanBiasX;
     this.driftOffsetY = meanBiasY;
+  }
+
+  /**
+   * Doğrulama noktalarından afin düzeltme hesapla (6 parametre).
+   * Sadece ötelemeye kıyasla döndürme ve ölçek hatalarını da düzeltir.
+   * En az 3 nokta gerekir; 5+ ile en iyi sonuç verir.
+   */
+  setAffineCorrection(
+    points: { predX: number; predY: number; trueX: number; trueY: number }[]
+  ): void {
+    if (points.length < 3) {
+      const bx = points.reduce((s, p) => s + (p.trueX - p.predX), 0) / points.length;
+      const by = points.reduce((s, p) => s + (p.trueY - p.predY), 0) / points.length;
+      this.setInitialDriftOffset(bx, by);
+      return;
+    }
+
+    // Least-squares: [trueX] = [predX predY 1] * [a11 a12 tx]^T  (ayrı ayrı X ve Y)
+    const n = points.length;
+    const A: number[][] = points.map(p => [p.predX, p.predY, 1]);
+    const bx = points.map(p => p.trueX);
+    const by = points.map(p => p.trueY);
+
+    // Normal denklemler: (A^T A) w = A^T b
+    const AtA = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+    const AtBx = [0, 0, 0];
+    const AtBy = [0, 0, 0];
+    for (let i = 0; i < n; i++) {
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 3; c++) {
+          AtA[r][c] += A[i][r] * A[i][c];
+        }
+        AtBx[r] += A[i][r] * bx[i];
+        AtBy[r] += A[i][r] * by[i];
+      }
+    }
+
+    // Küçük regularization (sayısal kararlılık)
+    for (let i = 0; i < 3; i++) AtA[i][i] += 1e-6;
+
+    const wx = solveLinearSystem(AtA, AtBx);
+    const wy = solveLinearSystem(AtA, AtBy);
+
+    // Sanity check: afin dönüşüm makul mi? (aşırı ölçek/döndürme yok)
+    const scaleX = Math.sqrt(wx[0] * wx[0] + wx[1] * wx[1]);
+    const scaleY = Math.sqrt(wy[0] * wy[0] + wy[1] * wy[1]);
+    if (scaleX < 0.5 || scaleX > 2 || scaleY < 0.5 || scaleY > 2) {
+      logger.warn("[GazeModel] Afin düzeltme aşırı ölçek tespit etti, sadece ötelemeye düşülüyor");
+      const mbx = points.reduce((s, p) => s + (p.trueX - p.predX), 0) / n;
+      const mby = points.reduce((s, p) => s + (p.trueY - p.predY), 0) / n;
+      this.setInitialDriftOffset(mbx, mby);
+      return;
+    }
+
+    this.affineCorrection = {
+      a11: wx[0], a12: wx[1], tx: wx[2],
+      a21: wy[0], a22: wy[1], ty: wy[2],
+    };
+    this.driftOffsetX = 0;
+    this.driftOffsetY = 0;
+    logger.log("[GazeModel] Afin düzeltme uygulandı:", this.affineCorrection);
   }
 
   getDriftOffset(): { x: number; y: number } {
@@ -719,6 +830,7 @@ export class GazeModel {
       driftOffsetX: this.driftOffsetX,
       driftOffsetY: this.driftOffsetY,
       refPose: this.refPose,
+      affineCorrection: this.affineCorrection,
     });
   }
 
@@ -736,6 +848,7 @@ export class GazeModel {
       this.driftOffsetX = data.driftOffsetX ?? 0;
       this.driftOffsetY = data.driftOffsetY ?? 0;
       this.refPose = data.refPose ?? null;
+      this.affineCorrection = data.affineCorrection ?? null;
       this.trained = true;
     } catch (err) {
       this.trained = false;
