@@ -15,7 +15,7 @@ const nextConfig = {
               "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.jsdelivr.net https://vercel.live",
               "style-src 'self' 'unsafe-inline' https://vercel.live",
               "font-src 'self' https://vercel.live data:",
-              "img-src 'self' data: blob:",
+              "img-src 'self' data: blob: https://vercel.com https://vercel.live",
               "media-src 'self' blob:",
               "connect-src 'self' https://cdn.jsdelivr.net https://vercel.live",
               "frame-src https://vercel.live",

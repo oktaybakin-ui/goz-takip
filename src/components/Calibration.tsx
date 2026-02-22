@@ -148,14 +148,55 @@ export default function Calibration({
     animFrameRef.current = requestAnimationFrame(sampleLoop);
   }, [faceTracker, startPointCollection]);
 
-  // Doğrulama veri toplama döngüsü – hata + sapma (bias) toplanır; bias merkez ağırlıklı hesaplanır (araştırma: ekran merkezi daha güvenilir)
+  // Doğrulama veri toplama döngüsü – hata + sapma (bias) toplanır; takılmaması için zaman aşımı ve daha düşük eşik
   const startValidationSampling = useCallback((manager: CalibrationManager) => {
     const errors: number[] = [];
     let sampleCount = 0;
-    const targetSamples = 60;
+    const targetSamples = 40;
     let settleCount = 0;
     const fps = faceTracker.getFPS() || 30;
     const settleFrames = Math.round(fps * 1.5);
+    const validationStartTime = Date.now();
+    const VALIDATION_TIMEOUT_MS = 15000;
+
+    const finishValidationPoint = () => {
+      const avgError = errors.length > 0
+        ? errors.reduce((s, e) => s + e, 0) / errors.length
+        : 999;
+      validationErrorsRef.current.push(avgError);
+
+      const hasMore = manager.nextValidationPoint();
+      if (hasMore) {
+        validationPointRef.current = manager.getCurrentValidationPoint()
+          ? { relX: manager.getCurrentValidationPoint()!.relX, relY: manager.getCurrentValidationPoint()!.relY }
+          : null;
+        startPointCollection(manager, true);
+      } else {
+        const allErrors = validationErrorsRef.current;
+        const meanError = allErrors.length > 0
+          ? allErrors.reduce((s, e) => s + e, 0) / allErrors.length
+          : 999;
+        const biasSamples = validationBiasesRef.current;
+        let meanBiasX = 0;
+        let meanBiasY = 0;
+        if (biasSamples.length > 0) {
+          let sumW = 0;
+          let sumWx = 0;
+          let sumWy = 0;
+          for (const s of biasSamples) {
+            const dist = Math.sqrt((s.relX - 0.5) ** 2 + (s.relY - 0.5) ** 2);
+            const w = 1 / (1 + dist);
+            sumW += w;
+            sumWx += s.biasX * w;
+            sumWy += s.biasY * w;
+          }
+          meanBiasX = sumW > 0 ? sumWx / sumW : 0;
+          meanBiasY = sumW > 0 ? sumWy / sumW : 0;
+        }
+        logger.log("[Calibration] Doğrulama tamamlandı, ortalama hata:", Math.round(meanError), "px, merkez-ağırlıklı bias:", Math.round(meanBiasX), ",", Math.round(meanBiasY));
+        manager.completeValidation(meanError, meanBiasX, meanBiasY);
+      }
+    };
 
     const validationLoop = () => {
       // Settle time: ilk N frame'i atla
@@ -165,48 +206,19 @@ export default function Calibration({
         return;
       }
 
-      if (sampleCount >= targetSamples) {
-        const avgError = errors.length > 0
-          ? errors.reduce((s, e) => s + e, 0) / errors.length
-          : 999;
-        validationErrorsRef.current.push(avgError);
+      // Zaman aşımı: aynı noktada 15 sn geçtiyse sonraki noktaya geç (takılmayı önle)
+      if (Date.now() - validationStartTime > VALIDATION_TIMEOUT_MS) {
+        finishValidationPoint();
+        return;
+      }
 
-        const hasMore = manager.nextValidationPoint();
-        if (hasMore) {
-          validationPointRef.current = manager.getCurrentValidationPoint()
-            ? { relX: manager.getCurrentValidationPoint()!.relX, relY: manager.getCurrentValidationPoint()!.relY }
-            : null;
-          startPointCollection(manager, true);
-        } else {
-          const allErrors = validationErrorsRef.current;
-          const meanError = allErrors.length > 0
-            ? allErrors.reduce((s, e) => s + e, 0) / allErrors.length
-            : 999;
-          const biasSamples = validationBiasesRef.current;
-          let meanBiasX = 0;
-          let meanBiasY = 0;
-          if (biasSamples.length > 0) {
-            let sumW = 0;
-            let sumWx = 0;
-            let sumWy = 0;
-            for (const s of biasSamples) {
-              const dist = Math.sqrt((s.relX - 0.5) ** 2 + (s.relY - 0.5) ** 2);
-              const w = 1 / (1 + dist);
-              sumW += w;
-              sumWx += s.biasX * w;
-              sumWy += s.biasY * w;
-            }
-            meanBiasX = sumW > 0 ? sumWx / sumW : 0;
-            meanBiasY = sumW > 0 ? sumWy / sumW : 0;
-          }
-          logger.log("[Calibration] Doğrulama tamamlandı, ortalama hata:", Math.round(meanError), "px, merkez-ağırlıklı bias:", Math.round(meanBiasX), ",", Math.round(meanBiasY));
-          manager.completeValidation(meanError, meanBiasX, meanBiasY);
-        }
+      if (sampleCount >= targetSamples) {
+        finishValidationPoint();
         return;
       }
 
       const features = faceTracker.getLastFeatures();
-      if (features && features.confidence > 0.5) {
+      if (features && features.confidence > 0.35) {
         const result = manager.addValidationSample(features);
         if (result) {
           errors.push(result.error);
