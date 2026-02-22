@@ -89,8 +89,8 @@ function createSelectivePolynomialFeatures(input: number[]): number[] {
     }
   }
 
-  // Kübik: avgRelX, avgRelY, leftIrisRelX, leftIrisRelY
-  const cubicEnd = Math.min(3, input.length - 1);
+  // Kübik: avgRelX/Y, leftIrisRelX/Y, rightIrisRelX/Y (her iki göz için)
+  const cubicEnd = Math.min(5, input.length - 1);
   for (let i = 0; i <= cubicEnd; i++) {
     features.push(input[i] * input[i] * input[i]);
   }
@@ -196,18 +196,23 @@ function removeOutliers(samples: CalibrationSample[]): CalibrationSample[] {
       return;
     }
 
-    // Grup içi GÖRECELİ iris pozisyon ortalamaları (baş hareketinden bağımsız)
-    const meanLx = groupSamples.reduce((s, sp) => s + sp.features.leftIrisRelX, 0) / groupSamples.length;
-    const meanLy = groupSamples.reduce((s, sp) => s + sp.features.leftIrisRelY, 0) / groupSamples.length;
-    const meanRx = groupSamples.reduce((s, sp) => s + sp.features.rightIrisRelX, 0) / groupSamples.length;
-    const meanRy = groupSamples.reduce((s, sp) => s + sp.features.rightIrisRelY, 0) / groupSamples.length;
+    // Medyan tabanlı merkez hesabı (outlier'a dayanıklı — mean yerine median)
+    const sortedLx = [...groupSamples].sort((a, b) => a.features.leftIrisRelX - b.features.leftIrisRelX);
+    const sortedLy = [...groupSamples].sort((a, b) => a.features.leftIrisRelY - b.features.leftIrisRelY);
+    const sortedRx = [...groupSamples].sort((a, b) => a.features.rightIrisRelX - b.features.rightIrisRelX);
+    const sortedRy = [...groupSamples].sort((a, b) => a.features.rightIrisRelY - b.features.rightIrisRelY);
+    const mid = Math.floor(groupSamples.length / 2);
+    const medLx = sortedLx[mid].features.leftIrisRelX;
+    const medLy = sortedLy[mid].features.leftIrisRelY;
+    const medRx = sortedRx[mid].features.rightIrisRelX;
+    const medRy = sortedRy[mid].features.rightIrisRelY;
 
-    // Her örneğin ortalamadan uzaklığı
+    // Her örneğin medyandan uzaklığı
     const distances = groupSamples.map((sp) => {
-      const dlx = sp.features.leftIrisRelX - meanLx;
-      const dly = sp.features.leftIrisRelY - meanLy;
-      const drx = sp.features.rightIrisRelX - meanRx;
-      const dry = sp.features.rightIrisRelY - meanRy;
+      const dlx = sp.features.leftIrisRelX - medLx;
+      const dly = sp.features.leftIrisRelY - medLy;
+      const drx = sp.features.rightIrisRelX - medRx;
+      const dry = sp.features.rightIrisRelY - medRy;
       return Math.sqrt(dlx * dlx + dly * dly + drx * drx + dry * dry);
     });
 
@@ -592,8 +597,20 @@ export class GazeModel {
       }
       const targetsX2 = cleanSamples2.map((s) => s.targetX);
       const targetsY2 = cleanSamples2.map((s) => s.targetY);
+      // Retrain'de de spatial weighting koru (kenar doğruluğu korunsun)
+      const screenCenterX2 = targetsX2.reduce((s, v) => s + v, 0) / targetsX2.length;
+      const screenCenterY2 = targetsY2.reduce((s, v) => s + v, 0) / targetsY2.length;
+      const screenDiag2 = Math.sqrt(
+        Math.max(...targetsX2.map(x => (x - screenCenterX2) ** 2)) +
+        Math.max(...targetsY2.map(y => (y - screenCenterY2) ** 2))
+      ) || 1;
       const sampleWeights2 = cleanSamples2.map((s) => {
-        return Math.max(0.15, s.features.confidence);
+        const confWeight = Math.max(0.15, s.features.confidence);
+        const dist = Math.sqrt(
+          (s.targetX - screenCenterX2) ** 2 + (s.targetY - screenCenterY2) ** 2
+        );
+        const spatialWeight = 1 + 0.6 * (dist / screenDiag2);
+        return confWeight * spatialWeight;
       });
       this.weightsX = ridgeRegression(polyFeatures2, targetsX2, this.lambda, sampleWeights2);
       this.weightsY = ridgeRegression(polyFeatures2, targetsY2, this.lambda, sampleWeights2);
