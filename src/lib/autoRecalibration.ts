@@ -144,7 +144,9 @@ export class AutoRecalibration {
    * Check if fixation is on a known UI element
    */
   private checkUIElementFixation(fixation: Fixation, features: EyeFeatures): void {
-    for (const [elementId, bounds] of this.uiElements) {
+    const entries = Array.from(this.uiElements.entries());
+    for (let i = 0; i < entries.length; i++) {
+      const [elementId, bounds] = entries[i];
       if (this.isPointInBounds(fixation.x, fixation.y, bounds)) {
         // User is looking at a UI element - use element center as ground truth
         const sample: CalibrationSample = {
