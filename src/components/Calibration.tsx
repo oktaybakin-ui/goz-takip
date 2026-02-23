@@ -77,7 +77,7 @@ export default function Calibration({
     setSampleProgress(0);
     samplingRef.current = false;
 
-    let count = 1;  // 2'den 1'e düşürüldü (daha hızlı kalibrasyon)
+    let count = 0;  // Geri sayım yok - anında başla
     setCountdown(count);
 
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -101,7 +101,7 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = 12000;
+    const POINT_TIMEOUT_MS = 8000;  // 12s → 8s
 
     const advanceToNext = () => {
       samplingRef.current = false;
@@ -498,7 +498,7 @@ export default function Calibration({
             <p className="text-gray-500 text-xs">
               {state.phase === "calibrating"
                 ? `Nokta ${state.currentPointIndex + 1} / ${state.totalPoints}`
-                : `Doğrulama ${state.currentPointIndex + 1} / 9`}
+                : `Doğrulama ${state.currentPointIndex + 1} / 5`}
             </p>
 
             {/* Uyarı */}
@@ -506,6 +506,19 @@ export default function Calibration({
               <div className="mt-3 bg-red-900/50 border border-red-500 rounded-lg px-4 py-2 text-red-300 text-sm">
                 ⚠️ {warning}
               </div>
+            )}
+            
+            {/* Validation atla butonu */}
+            {state.phase === "validating" && (
+              <button
+                onClick={() => {
+                  // Validation'ı atla ve direkt complete'e geç
+                  managerRef.current?.completeValidation([], []);
+                }}
+                className="mt-3 px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 transition"
+              >
+                Doğrulamayı Atla →
+              </button>
             )}
           </div>
         </div>

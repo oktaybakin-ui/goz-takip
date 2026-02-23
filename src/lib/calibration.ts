@@ -57,8 +57,8 @@ export function generateCalibrationPoints(
 ): CalibrationPoint[] {
   const points: CalibrationPoint[] = [];
   let id = 0;
-  const cols = 7;  // 5'ten 7'ye çıkardık
-  const rows = 7;  // 5'ten 7'ye çıkardık (toplam 49 nokta)
+  const cols = 5;  // 25 nokta yeterli (5x5)
+  const rows = 5;  // Daha hızlı kalibrasyon
   for (let row = 0; row < rows; row++) {
     const isEvenRow = row % 2 === 0;
     for (let ci = 0; ci < cols; ci++) {
@@ -84,14 +84,10 @@ export function generateValidationPoints(
 ): CalibrationPoint[] {
   const positions = [
     { relX: 0.5, relY: 0.5 },   // merkez
-    { relX: 0.2, relY: 0.2 },   // sol üst
-    { relX: 0.8, relY: 0.2 },   // sağ üst
-    { relX: 0.2, relY: 0.8 },   // sol alt
-    { relX: 0.8, relY: 0.8 },   // sağ alt
-    { relX: 0.5, relY: 0.2 },   // üst orta
-    { relX: 0.5, relY: 0.8 },   // alt orta
-    { relX: 0.2, relY: 0.5 },   // sol orta
-    { relX: 0.8, relY: 0.5 },   // sağ orta
+    { relX: 0.15, relY: 0.15 }, // sol üst
+    { relX: 0.85, relY: 0.15 }, // sağ üst
+    { relX: 0.15, relY: 0.85 }, // sol alt
+    { relX: 0.85, relY: 0.85 }, // sağ alt
   ];
 
   return positions.map((pos, i) => ({
@@ -180,9 +176,9 @@ export class CalibrationManager {
   private currentPointFrameCount: number = 0;
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
-  private readonly IRIS_BUFFER_SIZE = 15;
-  private readonly IRIS_STD_MAX = 0.025;
-  private readonly MIN_SAMPLES_PER_POINT = 40; // 35'ten 40'a
+  private readonly IRIS_BUFFER_SIZE = 10;  // 15'ten 10'a
+  private readonly IRIS_STD_MAX = 0.035;   // 0.025'ten 0.035'e (daha toleranslı)
+  private readonly MIN_SAMPLES_PER_POINT = 30; // Daha hızlı kalibrasyon
   private readonly MIN_CONFIDENCE_CALIBRATION = 0.45; // 0.40'tan 0.45'e
   private readonly RETRY_QUALITY_THRESHOLD = 25; // 20'den 25'e (daha sıkı kalite)
   private pointQuality: Map<number, number> = new Map();
@@ -202,7 +198,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: 49,  // 25'ten 49'a çıkardık (7x7 grid)
+      totalPoints: 25,  // 5x5 grid
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,
