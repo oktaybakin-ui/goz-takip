@@ -117,11 +117,11 @@ export class FaceTracker {
     leftX: number[], leftY: number[], 
     rightX: number[], rightY: number[] 
   } = { leftX: [], leftY: [], rightX: [], rightY: [] };
-  private readonly IRIS_HISTORY_SIZE = 5;
+  private readonly IRIS_HISTORY_SIZE = 3; // 5 -> 3 (daha az memory, hızlı median)
   
   // Advanced iris detector
   private advancedIrisDetector: AdvancedIrisDetector | null = null;
-  private useAdvancedIris: boolean = true;
+  private useAdvancedIris: boolean = false; // Performans için kapalı
 
   constructor() {
     // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter

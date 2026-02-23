@@ -138,12 +138,12 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   imageNatDimsRef.current = imageNaturalDimensions;
 
   const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
-  if (!modelRef.current) modelRef.current = new GazeModel(0.005, true);  // Kalman filter etkin
+  if (!modelRef.current) modelRef.current = new GazeModel(0.005, false);  // Kalman filter kapalı (performans)
   const ensembleRef = useRef<MultiModelEnsemble>(null as unknown as MultiModelEnsemble);
   if (!ensembleRef.current) ensembleRef.current = new MultiModelEnsemble();
   const autoRecalRef = useRef<AutoRecalibration>(null as unknown as AutoRecalibration);
   if (!autoRecalRef.current) autoRecalRef.current = new AutoRecalibration();
-  const useEnsemble = useRef(true); // Multi-model ensemble kullan
+  const useEnsemble = useRef(false); // Multi-model ensemble kullan (performans için kapalı)
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
@@ -158,7 +158,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const lastRawScreenPointRef = useRef<{ x: number; y: number } | null>(null);
   const showTransitionOverlayRef = useRef(false);
   const lastFeatureTimestampRef = useRef(0);
-  const GAZE_UI_THROTTLE_MS = 80;
+  const GAZE_UI_THROTTLE_MS = 100; // 80ms -> 100ms (10Hz UI update)
 
   const imageCount = imageUrls.length;
   const isMultiImage = imageCount > 1;
@@ -432,19 +432,22 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     if (autoRecalRef.current && !autoRecalTimerRef.current) {
       autoRecalTimerRef.current = setInterval(() => {
         if (autoRecalRef.current && modelRef.current) {
-          const updated = autoRecalRef.current.updateModel(modelRef.current);
-          if (updated) {
-            logger.log("[EyeTracker] Model auto-recalibrated");
-          }
+          // Auto-recalibration'ı async yap ki UI donmasın
+          setTimeout(() => {
+            const updated = autoRecalRef.current.updateModel(modelRef.current);
+            if (updated) {
+              logger.log("[EyeTracker] Model auto-recalibrated");
+            }
+          }, 0);
         }
-      }, 30000);
+      }, 60000); // 30s -> 60s
     }
 
     // Gaze tracking - mevcut tracking'i durdurup yeni callback ile başlat
     faceTrackerRef.current.stopTracking();
 
     let debugCounter = 0;
-    const debugInterval = 60; // Her 60 frame'de bir log
+    const debugInterval = 300; // Her 300 frame'de bir log (daha az console spam)
 
     faceTrackerRef.current.startTracking((features: EyeFeatures) => {
       debugCounter++;
@@ -458,9 +461,9 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         return;
       }
 
-      // Aynı kameradan gelen tekrarlı frame'leri atla (30fps kamera, 60fps rAF)
+      // Frame throttling - maksimum 30fps için (33ms)
       const featureTimestamp = performance.now();
-      if (featureTimestamp - lastFeatureTimestampRef.current < 15) return;
+      if (featureTimestamp - lastFeatureTimestampRef.current < 33) return;
       lastFeatureTimestampRef.current = featureTimestamp;
 
       if (features.confidence < 0.15 || features.eyeOpenness < 0.02) {
@@ -572,8 +575,9 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
           point.confidence *= (edgeDist / BOUNDARY_MARGIN);
         }
         gazePointsRef.current.push(point);
-        if (gazePointsRef.current.length > 50_000) {
-          gazePointsRef.current = gazePointsRef.current.slice(-40_000);
+        // Daha agresif memory management
+        if (gazePointsRef.current.length > 20_000) {
+          gazePointsRef.current = gazePointsRef.current.slice(-15_000);
         }
         const fixation = fixationDetectorRef.current.addGazePoint(point);
         if (fixation) {
@@ -657,11 +661,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
       // Canlı gaze noktası
       if (gazePoint && isTracking) {
-        // Gaze trail (son 10 nokta)
-        const recentPoints = gazePointsRef.current.slice(-10);
+        // Gaze trail - daha basit (son 5 nokta)
+        const recentPoints = gazePointsRef.current.slice(-5);
         if (recentPoints.length > 1) {
-          ctx.strokeStyle = "rgba(0, 150, 255, 0.3)";
-          ctx.lineWidth = 2;
+          ctx.strokeStyle = "rgba(0, 150, 255, 0.2)";
+          ctx.lineWidth = 1.5;
           ctx.beginPath();
           ctx.moveTo(recentPoints[0].x, recentPoints[0].y);
           for (let i = 1; i < recentPoints.length; i++) {
