@@ -512,8 +512,8 @@ export default function Calibration({
             {state.phase === "validating" && (
               <button
                 onClick={() => {
-                  // Validation'ı atla ve direkt complete'e geç
-                  managerRef.current?.completeValidation([], []);
+                  // Validation'ı atla ve direkt complete'e geç (varsayılan hata: 75px)
+                  managerRef.current?.completeValidation(75);
                 }}
                 className="mt-3 px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 transition"
               >
