@@ -338,7 +338,7 @@ export class GazeModel {
   private kalmanFilter: KalmanFilter2D | null = null;
   private useKalmanFilter: boolean = true;
 
-  constructor(lambda: number = 0.008, useKalman: boolean = false) {
+  constructor(lambda: number = 0.008, useKalman: boolean = true) {
     this.lambda = lambda;
     this.useKalmanFilter = useKalman;
     if (useKalman) {

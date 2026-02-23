@@ -1,11 +1,49 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  webpack: (config) => {
+  // Compiler optimizasyonları
+  swcMinify: true,
+  compiler: {
+    removeConsole: {
+      exclude: ['error', 'warn'],
+    },
+  },
+  experimental: {
+    optimizeCss: true,
+  },
+  webpack: (config, { isServer }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
       fs: false,
       path: false,
     };
+    
+    // Production optimizasyonları
+    if (!isServer) {
+      config.optimization = {
+        ...config.optimization,
+        runtimeChunk: 'single',
+        splitChunks: {
+          chunks: 'all',
+          cacheGroups: {
+            default: {
+              minChunks: 2,
+              priority: -20,
+              reuseExistingChunk: true,
+            },
+            vendors: {
+              test: /[\\/]node_modules[\\/]/,
+              priority: -10,
+            },
+            common: {
+              minChunks: 2,
+              priority: -5,
+              reuseExistingChunk: true,
+            },
+          },
+        },
+      };
+    }
+    
     return config;
   },
   async headers() {

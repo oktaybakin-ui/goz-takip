@@ -121,7 +121,7 @@ export class FaceTracker {
   
   // Advanced iris detector
   private advancedIrisDetector: AdvancedIrisDetector | null = null;
-  private useAdvancedIris: boolean = false; // Performans için kapalı
+  private useAdvancedIris: boolean = true;
 
   constructor() {
     // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter

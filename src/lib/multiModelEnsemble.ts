@@ -20,6 +20,7 @@ export class MultiModelEnsemble {
   private models: GazeModel[] = [];
   private modelWeights: number[] = [];
   private config: EnsembleConfig;
+  private lastPrediction: { hash: string; result: any; timestamp: number } | null = null;
   
   constructor(config?: Partial<EnsembleConfig>) {
     this.config = {
@@ -84,6 +85,17 @@ export class MultiModelEnsemble {
    * Get ensemble prediction
    */
   predict(features: any): { x: number; y: number; confidence: number } | null {
+    // Simple feature hash for caching
+    const featureHash = this.hashFeatures(features);
+    const now = Date.now();
+    
+    // Check cache (valid for 16ms)
+    if (this.lastPrediction && 
+        this.lastPrediction.hash === featureHash &&
+        now - this.lastPrediction.timestamp < 16) {
+      return this.lastPrediction.result;
+    }
+    
     const predictions = this.models.map((model, i) => ({
       pred: model.predict(features),
       weight: this.modelWeights[i]
@@ -125,12 +137,21 @@ export class MultiModelEnsemble {
     // Higher variance = lower confidence
     const ensembleConfidence = minConfidence * Math.exp(-variance / 1000);
     
-    return {
+    const result = {
       x: avgX,
       y: avgY,
       confidence: ensembleConfidence,
       timestamp: Date.now()
-    } as any;
+    };
+    
+    // Cache the result
+    this.lastPrediction = {
+      hash: featureHash,
+      result,
+      timestamp: now
+    };
+    
+    return result as any;
   }
   
   /**
@@ -217,5 +238,19 @@ export class MultiModelEnsemble {
   reset(): void {
     this.models.forEach(m => m.resetSmoothing());
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
+    this.lastPrediction = null;
+  }
+  
+  private hashFeatures(features: any): string {
+    // Simple hash based on key feature values
+    const vals = [
+      features.leftPupil.x.toFixed(3),
+      features.leftPupil.y.toFixed(3),
+      features.rightPupil.x.toFixed(3),
+      features.rightPupil.y.toFixed(3),
+      features.leftIris.x.toFixed(3),
+      features.leftIris.y.toFixed(3)
+    ];
+    return vals.join('|');
   }
 }

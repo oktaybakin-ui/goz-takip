@@ -138,12 +138,12 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   imageNatDimsRef.current = imageNaturalDimensions;
 
   const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
-  if (!modelRef.current) modelRef.current = new GazeModel(0.005, false);  // Kalman filter kapalı (performans)
+  if (!modelRef.current) modelRef.current = new GazeModel(0.005, true);  // Kalman filter etkin
   const ensembleRef = useRef<MultiModelEnsemble>(null as unknown as MultiModelEnsemble);
   if (!ensembleRef.current) ensembleRef.current = new MultiModelEnsemble();
   const autoRecalRef = useRef<AutoRecalibration>(null as unknown as AutoRecalibration);
   if (!autoRecalRef.current) autoRecalRef.current = new AutoRecalibration();
-  const useEnsemble = useRef(false); // Multi-model ensemble kullan (performans için kapalı)
+  const useEnsemble = useRef(true); // Multi-model ensemble kullan
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
@@ -157,6 +157,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const lastUiUpdateRef = useRef<number>(0);
   const lastRawScreenPointRef = useRef<{ x: number; y: number } | null>(null);
   const showTransitionOverlayRef = useRef(false);
+  const processingTimeRef = useRef(0);
   const lastFeatureTimestampRef = useRef(0);
   const GAZE_UI_THROTTLE_MS = 100; // 80ms -> 100ms (10Hz UI update)
 
@@ -432,15 +433,24 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     if (autoRecalRef.current && !autoRecalTimerRef.current) {
       autoRecalTimerRef.current = setInterval(() => {
         if (autoRecalRef.current && modelRef.current) {
-          // Auto-recalibration'ı async yap ki UI donmasın
-          setTimeout(() => {
-            const updated = autoRecalRef.current.updateModel(modelRef.current);
-            if (updated) {
-              logger.log("[EyeTracker] Model auto-recalibrated");
-            }
-          }, 0);
+          // Auto-recalibration'ı idle callback ile yap
+          if ('requestIdleCallback' in window) {
+            requestIdleCallback(() => {
+              const updated = autoRecalRef.current.updateModel(modelRef.current);
+              if (updated) {
+                logger.log("[EyeTracker] Model auto-recalibrated");
+              }
+            }, { timeout: 2000 });
+          } else {
+            setTimeout(() => {
+              const updated = autoRecalRef.current.updateModel(modelRef.current);
+              if (updated) {
+                logger.log("[EyeTracker] Model auto-recalibrated");
+              }
+            }, 100);
+          }
         }
-      }, 60000); // 30s -> 60s
+      }, 60000);
     }
 
     // Gaze tracking - mevcut tracking'i durdurup yeni callback ile başlat
@@ -461,10 +471,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         return;
       }
 
-      // Frame throttling - maksimum 30fps için (33ms)
+      // Adaptive frame throttling
       const featureTimestamp = performance.now();
-      if (featureTimestamp - lastFeatureTimestampRef.current < 33) return;
+      const frameTime = featureTimestamp - lastFeatureTimestampRef.current;
+      
+      // Skip frames if processing is slow
+      const targetFrameTime = processingTimeRef.current > 10 ? 50 : 33; // 20fps veya 30fps
+      if (frameTime < targetFrameTime) return;
+      
       lastFeatureTimestampRef.current = featureTimestamp;
+      const processStart = performance.now();
 
       if (features.confidence < 0.15 || features.eyeOpenness < 0.02) {
         if (shouldLog) logger.log("[Tracking] Düşük confidence/eyeOpenness:", features.confidence.toFixed(2), features.eyeOpenness.toFixed(3));
@@ -484,6 +500,9 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         if (shouldLog) logger.log("[Tracking] Model predict null döndü (outlier?)");
         return;
       }
+      
+      // Processing time tracking
+      processingTimeRef.current = performance.now() - processStart;
 
       lastRawScreenPointRef.current = { x: screenPoint.x, y: screenPoint.y };
 
@@ -654,8 +673,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
     let running = true;
 
+    let frameSkip = 0;
     const draw = () => {
       if (!running) return;
+      
+      // Skip frames for smoother animation
+      frameSkip = (frameSkip + 1) % 2;
+      if (frameSkip === 0 && isTracking) {
+        drawAnimRef.current = requestAnimationFrame(draw);
+        return;
+      }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
