@@ -7,9 +7,23 @@ const nextConfig = {
       exclude: ['error', 'warn'],
     },
   },
-  // experimental: {
-  //   optimizeCss: true,
-  // },
+  experimental: {
+    optimizeCss: true,
+  },
+  // CSS optimizasyonları
+  compiler: {
+    removeConsole: {
+      exclude: ['error', 'warn'],
+    },
+    // Emotion desteği (eğer kullanılırsa)
+    emotion: false,
+  },
+  // Production optimizasyonları
+  productionBrowserSourceMaps: false,
+  // CSS modülleri için optimizasyon
+  cssModules: {
+    localIdentName: '[hash:base64:5]',
+  },
   webpack: (config, { isServer }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,

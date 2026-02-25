@@ -2,78 +2,106 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 3, 7, 18;
-  --background-end-rgb: 3, 7, 18;
-}
+/* Custom styles */
+@import '../styles/components.css';
+@import '../styles/utilities.css';
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: rgb(var(--background-start-rgb));
-  min-height: 100vh;
-  overflow-x: hidden;
-}
-
-/* Mobil güvenli alan (çentikli ekranlar) */
-.safe-area-pb {
-  padding-bottom: env(safe-area-inset-bottom, 12px);
-}
-
-/* Scrollbar stili */
-::-webkit-scrollbar {
-  width: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #111;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #333;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
-
-/* Kalibrasyon animasyonları */
-@keyframes pulse-ring {
-  0% {
-    transform: scale(0.8);
-    opacity: 1;
+/* Layer tanımlamaları - tree shaking için */
+@layer base {
+  :root {
+    --foreground-rgb: 255, 255, 255;
+    --background-start-rgb: 3, 7, 18;
+    --background-end-rgb: 3, 7, 18;
   }
-  100% {
-    transform: scale(1.5);
-    opacity: 0;
+
+  body {
+    color: rgb(var(--foreground-rgb));
+    background: rgb(var(--background-start-rgb));
+    min-height: 100vh;
+    overflow-x: hidden;
+    /* Performance optimizasyonu */
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar - sadece webkit destekleyen tarayıcılar için */
+  @supports (scrollbar-width: thin) {
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: #333 #111;
+    }
   }
 }
 
-@keyframes gaze-dot {
-  0%,
-  100% {
-    transform: scale(1);
+@layer components {
+  /* Kalibrasyon animasyonları */
+  @keyframes pulse-ring {
+    0% {
+      transform: scale(0.8);
+      opacity: 1;
+    }
+    100% {
+      transform: scale(1.5);
+      opacity: 0;
+    }
   }
-  50% {
-    transform: scale(1.2);
+
+  @keyframes gaze-dot {
+    0%,
+    100% {
+      transform: scale(1);
+    }
+    50% {
+      transform: scale(1.2);
+    }
+  }
+
+  .calibration-point-ring {
+    animation: pulse-ring 1.5s ease-out infinite;
+    will-change: transform, opacity;
+  }
+
+  .gaze-dot {
+    animation: gaze-dot 0.5s ease-in-out infinite;
+    will-change: transform;
   }
 }
 
-.calibration-point-ring {
-  animation: pulse-ring 1.5s ease-out infinite;
+@layer utilities {
+  /* Mobil güvenli alan (çentikli ekranlar) */
+  .safe-area-pb {
+    padding-bottom: env(safe-area-inset-bottom, 12px);
+  }
+
+  /* Video mirror efekti - GPU hızlandırma */
+  .video-mirror {
+    transform: scaleX(-1);
+    backface-visibility: hidden;
+  }
+
+  /* Canvas performans */
+  canvas {
+    image-rendering: auto;
+    will-change: transform;
+  }
 }
 
-.gaze-dot {
-  animation: gaze-dot 0.5s ease-in-out infinite;
-}
+/* Webkit scrollbar - sadece destekleyen tarayıcılar için */
+@supports selector(::-webkit-scrollbar) {
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
 
-/* Video mirror efekti */
-.video-mirror {
-  transform: scaleX(-1);
-}
+  ::-webkit-scrollbar-track {
+    background: #111;
+  }
 
-/* Canvas smooth rendering */
-canvas {
-  image-rendering: auto;
+  ::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #555;
+  }
 }

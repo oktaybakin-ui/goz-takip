@@ -1,0 +1,62 @@
+/* Performance optimized utilities */
+
+@layer utilities {
+  /* GPU accelerated transforms */
+  .gpu-accelerated {
+    transform: translateZ(0);
+    will-change: transform;
+  }
+
+  /* Reduced motion support */
+  @media (prefers-reduced-motion: reduce) {
+    .motion-safe\:animate-pulse {
+      animation: none;
+    }
+    
+    .motion-safe\:transition {
+      transition: none;
+    }
+    
+    .calibration-point-ring,
+    .gaze-dot {
+      animation: none;
+    }
+  }
+
+  /* High performance shadows */
+  .shadow-perf {
+    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+  }
+
+  /* Optimize text rendering */
+  .text-optimize {
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Contain layout for performance */
+  .contain-layout {
+    contain: layout;
+  }
+
+  .contain-paint {
+    contain: paint;
+  }
+
+  .contain-strict {
+    contain: strict;
+  }
+
+  /* Optimize image rendering */
+  .image-crisp {
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+  }
+
+  /* Prefers color scheme */
+  @media (prefers-color-scheme: dark) {
+    .dark\:shadow-perf {
+      box-shadow: 0 10px 15px -3px rgba(255, 255, 255, 0.05);
+    }
+  }
+}
