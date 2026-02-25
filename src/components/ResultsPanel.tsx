@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useMemo } from "react";
+import NextImage from "next/image";
 import { FixationMetrics, Fixation } from "@/lib/fixation";
 import { GazePoint } from "@/lib/gazeModel";
 import { clearCalibration, hasStoredCalibration } from "@/lib/calibrationStorage";
@@ -49,7 +50,10 @@ export default function ResultsPanel({
   if (!heatmapGeneratorRef.current) heatmapGeneratorRef.current = new HeatmapGenerator();
 
   const metrics = isMulti ? (resultsPerImage![selectedPhotoIndex]?.metrics ?? null) : (metricsProp ?? null);
-  const gazePoints = isMulti ? (resultsPerImage![selectedPhotoIndex]?.gazePoints ?? []) : (gazePointsProp ?? []);
+  const gazePoints = useMemo(
+    () => (isMulti ? (resultsPerImage![selectedPhotoIndex]?.gazePoints ?? []) : (gazePointsProp ?? [])),
+    [isMulti, resultsPerImage, selectedPhotoIndex, gazePointsProp]
+  );
   const imageUrl = isMulti ? resultsPerImage![selectedPhotoIndex]?.imageUrl : imageUrlProp;
   const imageDimensions = isMulti ? resultsPerImage![selectedPhotoIndex]?.imageDimensions : imageDimensionsProp;
 
@@ -323,7 +327,7 @@ export default function ResultsPanel({
               className="relative rounded-xl overflow-hidden border border-gray-800 bg-black"
               style={{ width: imageDimensions.width, height: imageDimensions.height, maxWidth: "100%" }}
             >
-              <img src={imageUrl} alt="Analiz" className="absolute inset-0 w-full h-full object-contain" />
+              <NextImage src={imageUrl} alt="Analiz" fill unoptimized className="absolute inset-0 w-full h-full object-contain" />
 
               {activeTab === "fixations" && (
                 <canvas ref={canvasRef} className="absolute inset-0 z-10" style={{ width: imageDimensions.width, height: imageDimensions.height }} />

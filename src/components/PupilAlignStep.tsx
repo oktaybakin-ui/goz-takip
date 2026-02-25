@@ -48,7 +48,7 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
         if (parentVideoRef) faceTracker.setVideoElement(null);
       };
     }
-  }, [faceTracker, parentVideoRef]);
+  }, [faceTracker, parentVideoRef, videoRef]);
 
   // Overlay çizimi (tespit edilen veya kullanıcı düzeltmesi)
   const draw = useCallback(() => {
@@ -113,7 +113,7 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
     // Kullanıcıya göre: "Sağ göz = yeşil, sol göz = mavi" — sol iris (ekranda sağda) mavi, sağ iris (ekranda solda) yeşil.
     drawDot(lx, ly, "rgba(59, 130, 246, 0.9)");
     drawDot(rx, ry, "rgba(34, 197, 94, 0.9)");
-  }, [faceTracker, videoSize]);
+  }, [faceTracker, videoSize, videoRef]);
 
   useEffect(() => {
     let raf: number;

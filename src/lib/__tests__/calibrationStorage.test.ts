@@ -17,6 +17,11 @@ const localStorageMock = {
   },
 };
 
+const VALID_MODEL_JSON = JSON.stringify({
+  weightsX: [],
+  weightsY: [],
+});
+
 describe("calibrationStorage", () => {
   beforeEach(() => {
     for (const key of Object.keys(storage)) delete storage[key];
@@ -24,10 +29,10 @@ describe("calibrationStorage", () => {
   });
 
   it("saveCalibration stores valid data", () => {
-    saveCalibration('{"weightsX":[]}', 12.5);
+    saveCalibration(VALID_MODEL_JSON, 12.5);
     expect(storage[CALIBRATION_STORAGE_KEY]).toBeTruthy();
     const parsed = JSON.parse(storage[CALIBRATION_STORAGE_KEY]);
-    expect(parsed.modelJson).toBe('{"weightsX":[]}');
+    expect(parsed.modelJson).toBe(VALID_MODEL_JSON);
     expect(parsed.meanErrorPx).toBe(12.5);
     expect(parsed.savedAt).toBeGreaterThan(0);
   });
@@ -37,10 +42,10 @@ describe("calibrationStorage", () => {
   });
 
   it("loadCalibration returns data after save", () => {
-    saveCalibration("model-json", 10);
+    saveCalibration(VALID_MODEL_JSON, 10);
     const loaded = loadCalibration();
     expect(loaded).not.toBeNull();
-    expect(loaded!.modelJson).toBe("model-json");
+    expect(loaded!.modelJson).toBe(VALID_MODEL_JSON);
     expect(loaded!.meanErrorPx).toBe(10);
   });
 
@@ -51,12 +56,12 @@ describe("calibrationStorage", () => {
 
   it("hasStoredCalibration reflects storage", () => {
     expect(hasStoredCalibration()).toBe(false);
-    saveCalibration("x", 0);
+    saveCalibration(VALID_MODEL_JSON, 0);
     expect(hasStoredCalibration()).toBe(true);
   });
 
   it("clearCalibration removes key", () => {
-    saveCalibration("x", 0);
+    saveCalibration(VALID_MODEL_JSON, 0);
     clearCalibration();
     expect(loadCalibration()).toBeNull();
   });

@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useCallback, useEffect } from "react";
+import NextImage from "next/image";
 import { useLang } from "@/contexts/LangContext";
 import { cropImagesToFace } from "@/lib/faceCrop";
 
@@ -241,7 +242,14 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
           <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2 sm:gap-3 w-full">
             {previews.map((url, i) => (
               <div key={i} className="relative group rounded-lg sm:rounded-xl overflow-hidden border-2 border-gray-700 bg-gray-900">
-                <img src={url} alt={`Foto ${i + 1}`} className="w-full aspect-square object-cover" />
+                <NextImage
+                  src={url}
+                  alt={`Foto ${i + 1}`}
+                  width={320}
+                  height={320}
+                  unoptimized
+                  className="w-full aspect-square object-cover"
+                />
                 <span className="absolute top-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
                   {i + 1}
                 </span>

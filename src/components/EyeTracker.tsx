@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
+import NextImage from "next/image";
 import { GazeModel, GazePoint, EyeFeatures } from "@/lib/gazeModel";
 import { FaceTracker } from "@/lib/faceTracker";
 import { FixationDetector, Fixation, FixationMetrics } from "@/lib/fixation";
@@ -615,7 +616,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         setGazePoint(point);
       }
     });
-  }, [imageLoaded, getImageRect]);
+  }, [imageLoaded, imageDimensions.width, imageDimensions.height, getImageRect]);
 
   // Kalibrasyon tamamlandığında otomatik olarak takibi başlat
   useEffect(() => {
@@ -1067,9 +1068,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
               </div>
             )}
             {/* Base image */}
-            <img
+            <NextImage
               src={currentImageUrl}
-              alt="Analiz görüntüsü"
+              alt="Analiz goruntusu"
+              fill
+              unoptimized
               className="absolute inset-0 w-full h-full object-contain"
             />
 

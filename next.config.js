@@ -1,24 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Compiler optimizasyonları
   swcMinify: true,
   compiler: {
     removeConsole: {
-      exclude: ['error', 'warn'],
+      exclude: ["error", "warn"],
     },
+    emotion: false,
   },
   experimental: {
     optimizeCss: true,
   },
-  // CSS optimizasyonları
-  compiler: {
-    removeConsole: {
-      exclude: ['error', 'warn'],
-    },
-    // Emotion desteği (eğer kullanılırsa)
-    emotion: false,
-  },
-  // Production optimizasyonları
   productionBrowserSourceMaps: false,
   webpack: (config, { isServer }) => {
     config.resolve.fallback = {
@@ -26,14 +17,13 @@ const nextConfig = {
       fs: false,
       path: false,
     };
-    
-    // Production optimizasyonları
+
     if (!isServer) {
       config.optimization = {
         ...config.optimization,
-        runtimeChunk: 'single',
+        runtimeChunk: "single",
         splitChunks: {
-          chunks: 'all',
+          chunks: "all",
           cacheGroups: {
             default: {
               minChunks: 2,
@@ -53,43 +43,34 @@ const nextConfig = {
         },
       };
     }
-    
+
     return config;
-  },
-  async headers() {
-    return [
-      {
-        source: '/:path*',
-        headers: [
-          {
-            key: 'X-Frame-Options',
-            value: 'DENY',
-          },
-          {
-            key: 'X-Content-Type-Options',
-            value: 'nosniff',
-          },
-          {
-            key: 'X-XSS-Protection',
-            value: '1; mode=block',
-          },
-          {
-            key: 'Referrer-Policy',
-            value: 'strict-origin-when-cross-origin',
-          },
-          {
-            key: 'Permissions-Policy',
-            value: 'camera=self, microphone=(), geolocation=()',
-          },
-        ],
-      },
-    ];
   },
   async headers() {
     return [
       {
         source: "/(.*)",
         headers: [
+          {
+            key: "X-Frame-Options",
+            value: "DENY",
+          },
+          {
+            key: "X-Content-Type-Options",
+            value: "nosniff",
+          },
+          {
+            key: "X-XSS-Protection",
+            value: "1; mode=block",
+          },
+          {
+            key: "Referrer-Policy",
+            value: "strict-origin-when-cross-origin",
+          },
+          {
+            key: "Permissions-Policy",
+            value: "camera=(self), microphone=(), geolocation=()",
+          },
           {
             key: "Content-Security-Policy",
             value: [

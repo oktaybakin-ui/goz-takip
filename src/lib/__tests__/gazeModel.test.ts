@@ -18,7 +18,13 @@ describe("GazeModel", () => {
 
   it("importModel restores trained state", () => {
     const model = new GazeModel(0.5);
-    const json = model.exportModel();
+    const json = JSON.stringify({
+      weightsX: [0, 0, 0],
+      weightsY: [0, 0, 0],
+      featureMeans: [0, 0, 0],
+      featureStds: [1, 1, 1],
+      lambda: 0.5,
+    });
     const model2 = new GazeModel(0.5);
     model2.importModel(json);
     expect(model2.isTrained()).toBe(true);

@@ -277,7 +277,7 @@ export default function Calibration({
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
     manager.startCalibration(screenW, screenH);
-  }, [model]);
+  }, [model, faceTracker]);
 
   // Talimat ekranından kalibrasyon başlat
   const beginCalibration = useCallback(() => {

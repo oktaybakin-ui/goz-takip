@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useRef, useEffect, useState, useCallback } from "react";
+import NextImage from "next/image";
 import type { GazePoint } from "@/lib/gazeModel";
 import type { Fixation } from "@/lib/fixation";
 
@@ -166,7 +167,7 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
   return (
     <div className="space-y-3">
       <div className="relative rounded-lg overflow-hidden bg-black" style={{ width, height }}>
-        <img src={imageUrl} alt="" className="absolute inset-0 w-full h-full object-contain" />
+        <NextImage src={imageUrl} alt="" fill unoptimized className="absolute inset-0 w-full h-full object-contain" />
         <canvas
           ref={canvasRef}
           width={width}
