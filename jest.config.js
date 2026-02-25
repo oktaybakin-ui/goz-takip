@@ -8,6 +8,14 @@ const config = {
   },
   preset: "ts-jest",
   collectCoverageFrom: ["src/lib/**/*.ts", "!src/lib/**/*.d.ts"],
+  coverageThreshold: {
+    global: {
+      branches: 50,
+      functions: 50,
+      lines: 60,
+      statements: 60,
+    },
+  },
 };
 
 module.exports = config;
