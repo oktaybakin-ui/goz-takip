@@ -7,9 +7,9 @@ const nextConfig = {
       exclude: ['error', 'warn'],
     },
   },
-  experimental: {
-    optimizeCss: true,
-  },
+  // experimental: {
+  //   optimizeCss: true,
+  // },
   webpack: (config, { isServer }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,
