@@ -36,12 +36,14 @@ class SimpleGazeModel {
   private expandFeatures(features: EyeFeatures): number[] {
     const f = [
       1, // bias
-      features.leftPupil.x, features.leftPupil.y,
-      features.rightPupil.x, features.rightPupil.y,
-      features.leftPupil.x ** 2, features.leftPupil.y ** 2,
-      features.rightPupil.x ** 2, features.rightPupil.y ** 2,
-      features.leftPupil.x * features.leftPupil.y,
-      features.rightPupil.x * features.rightPupil.y
+      features.leftIrisX, features.leftIrisY,
+      features.rightIrisX, features.rightIrisY,
+      features.leftIrisRelX, features.leftIrisRelY,
+      features.rightIrisRelX, features.rightIrisRelY,
+      features.yaw, features.pitch, features.roll,
+      features.faceScale,
+      features.eyeOpenness,
+      features.confidence
     ];
     return f;
   }
