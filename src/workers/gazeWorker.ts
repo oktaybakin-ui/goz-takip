@@ -1,5 +1,5 @@
 // Web Worker for heavy gaze calculations
-import { EyeFeatures } from '../lib/faceTracker';
+import { EyeFeatures } from '../lib/gazeModel';
 
 interface WorkerMessage {
   type: 'predict' | 'train' | 'updateEnsemble';
