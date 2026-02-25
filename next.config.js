@@ -20,10 +20,6 @@ const nextConfig = {
   },
   // Production optimizasyonları
   productionBrowserSourceMaps: false,
-  // CSS modülleri için optimizasyon
-  cssModules: {
-    localIdentName: '[hash:base64:5]',
-  },
   webpack: (config, { isServer }) => {
     config.resolve.fallback = {
       ...config.resolve.fallback,

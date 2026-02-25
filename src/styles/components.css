@@ -1,107 +1,105 @@
 /* Reusable component styles */
 
-@layer components {
-  /* Button variants */
-  .btn-base {
-    @apply min-h-[44px] min-w-[44px] px-6 py-3 rounded-xl font-semibold transition shadow-lg flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-950;
-  }
+/* Button variants */
+.btn-base {
+  @apply min-h-[44px] min-w-[44px] px-6 py-3 rounded-xl font-semibold transition shadow-lg flex items-center gap-2 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-gray-950;
+}
 
-  .btn-primary {
-    @apply btn-base bg-blue-600 text-white hover:bg-blue-500 focus:ring-blue-400;
-  }
+.btn-primary {
+  @apply btn-base bg-blue-600 text-white hover:bg-blue-500 focus:ring-blue-400;
+}
 
-  .btn-success {
-    @apply btn-base bg-green-600 text-white hover:bg-green-500 focus:ring-green-400;
-  }
+.btn-success {
+  @apply btn-base bg-green-600 text-white hover:bg-green-500 focus:ring-green-400;
+}
 
-  .btn-danger {
-    @apply btn-base bg-red-600 text-white hover:bg-red-500 focus:ring-red-400;
-  }
+.btn-danger {
+  @apply btn-base bg-red-600 text-white hover:bg-red-500 focus:ring-red-400;
+}
 
-  .btn-secondary {
-    @apply btn-base bg-gray-700 text-gray-300 hover:bg-gray-600 focus:ring-gray-500;
-  }
+.btn-secondary {
+  @apply btn-base bg-gray-700 text-gray-300 hover:bg-gray-600 focus:ring-gray-500;
+}
 
-  /* Card styles */
-  .card-base {
-    @apply bg-gray-900 rounded-xl shadow-lg border border-gray-800;
-  }
+/* Card styles */
+.card-base {
+  @apply bg-gray-900 rounded-xl shadow-lg border border-gray-800;
+}
 
-  .card-header {
-    @apply px-6 py-4 border-b border-gray-800;
-  }
+.card-header {
+  @apply px-6 py-4 border-b border-gray-800;
+}
 
-  .card-body {
-    @apply p-6;
-  }
+.card-body {
+  @apply p-6;
+}
 
-  /* Input styles */
-  .input-base {
-    @apply w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none transition;
-  }
+/* Input styles */
+.input-base {
+  @apply w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:border-blue-500 focus:ring-2 focus:ring-blue-500/20 focus:outline-none transition;
+}
 
-  /* Status indicators */
-  .status-dot {
-    @apply w-3 h-3 rounded-full;
-  }
+/* Status indicators */
+.status-dot {
+  @apply w-3 h-3 rounded-full;
+}
 
-  .status-active {
-    @apply status-dot bg-green-400 animate-pulse;
-  }
+.status-active {
+  @apply status-dot bg-green-400 animate-pulse;
+}
 
-  .status-inactive {
-    @apply status-dot bg-gray-500;
-  }
+.status-inactive {
+  @apply status-dot bg-gray-500;
+}
 
-  .status-error {
-    @apply status-dot bg-red-400;
-  }
+.status-error {
+  @apply status-dot bg-red-400;
+}
 
-  /* Loading states */
-  .skeleton {
-    @apply animate-pulse bg-gray-800 rounded;
-  }
+/* Loading states */
+.skeleton {
+  @apply animate-pulse bg-gray-800 rounded;
+}
 
-  .skeleton-text {
-    @apply skeleton h-4 w-full;
-  }
+.skeleton-text {
+  @apply skeleton h-4 w-full;
+}
 
-  .skeleton-button {
-    @apply skeleton h-11 w-32;
-  }
+.skeleton-button {
+  @apply skeleton h-11 w-32;
+}
 
-  /* Overlay styles */
-  .overlay-base {
-    @apply absolute inset-0 flex items-center justify-center;
-  }
+/* Overlay styles */
+.overlay-base {
+  @apply absolute inset-0 flex items-center justify-center;
+}
 
-  .overlay-dark {
-    @apply overlay-base bg-black/60 backdrop-blur-sm;
-  }
+.overlay-dark {
+  @apply overlay-base bg-black/60 backdrop-blur-sm;
+}
 
-  /* Grid layouts */
-  .image-grid {
-    @apply grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4;
-  }
+/* Grid layouts */
+.image-grid {
+  @apply grid gap-4 grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4;
+}
 
-  /* Animations */
-  .fade-in {
-    animation: fadeIn 0.3s ease-out;
-  }
+/* Animations */
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
 
-  @keyframes fadeIn {
-    from {
-      opacity: 0;
-      transform: translateY(10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
   }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
 
-  /* Focus visible only for keyboard */
-  .focus-visible-only {
-    @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500;
-  }
+/* Focus visible only for keyboard */
+.focus-visible-only {
+  @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-blue-500;
 }
