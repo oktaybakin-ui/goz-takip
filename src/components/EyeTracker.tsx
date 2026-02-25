@@ -105,6 +105,8 @@ function smoothGazePointsForExport<T extends { x: number; y: number; timestamp: 
 }
 
 export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
+  logger.log("[EyeTracker] Component mounted with", imageUrls.length, "images");
+  
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -195,8 +197,14 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     };
   }, [imageUrls]);
 
+  // Phase değişimlerini logla
+  useEffect(() => {
+    logger.log("[EyeTracker] Phase changed to:", phase);
+  }, [phase]);
+
   // Görüntüyü yükle (mevcut indekse göre)
   useEffect(() => {
+    logger.log("[EyeTracker] Loading image for index:", currentImageIndex, "url:", currentImageUrl);
     let cancelled = false;
     setImageLoaded(false);
     const img = new Image();
@@ -373,6 +381,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
   // Kalibrasyon tamamlandı (bias CalibrationManager içinde modele uygulandı)
   const handleCalibrationComplete = useCallback((meanError: number, samples?: any[]) => {
+    logger.log("[EyeTracker] Calibration complete, meanError:", meanError);
     setCalibrationError(meanError);
     
     // Ensemble'ı eğit (eğer samples varsa)
@@ -382,6 +391,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     }
     
     setPhase("tracking");
+    logger.log("[EyeTracker] Phase set to tracking");
+    
     // Kalibrasyon yapılan ekran boyutunu kaydet
     calibratedScreenSize.current = { w: window.innerWidth, h: window.innerHeight };
     setResizeWarning(false);
@@ -411,9 +422,12 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
   // Tracking başlat
   const startTracking = useCallback(() => {
+    logger.log("[startTracking] called, imageLoaded:", imageLoaded, "dimensions:", imageDimensions);
+    
     // Görüntü boyutları henüz yüklenmediyse tracking başlatma
     if (imageDimensions.width <= 0 || imageDimensions.height <= 0 || !imageLoaded) {
       logger.warn("[Tracking] Görüntü henüz yüklenmedi, tracking erteleniyor");
+      logger.warn("[Tracking] imageLoaded:", imageLoaded, "dimensions:", imageDimensions);
       return;
     }
     setIsTracking(true);
