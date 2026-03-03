@@ -125,15 +125,12 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
     return () => cancelAnimationFrame(raf);
   }, [draw]);
 
-  const getEventPos = (e: React.MouseEvent | React.TouchEvent): { x: number; y: number } | null => {
+  const getPointerPos = (e: React.PointerEvent): { x: number; y: number } | null => {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
-    if ("touches" in e) {
-      return { x: (e.touches[0].clientX - rect.left) * scaleX, y: (e.touches[0].clientY - rect.top) * scaleY };
-    }
     return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY };
   };
 
@@ -142,8 +139,10 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
   };
 
   const onPointerDown = useCallback(
-    (e: React.MouseEvent | React.TouchEvent) => {
-      const pos = getEventPos(e);
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      (e.target as HTMLElement).setPointerCapture(e.pointerId);
+      const pos = getPointerPos(e);
       if (!pos) return;
       const features = faceTracker.getLastFeatures();
       if (!features) return;
@@ -160,8 +159,8 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
   );
 
   const onPointerMove = useCallback(
-    (e: React.MouseEvent | React.TouchEvent) => {
-      const pos = getEventPos(e);
+    (e: React.PointerEvent) => {
+      const pos = getPointerPos(e);
       if (!pos || !dragging) return;
       if (dragging === "left") leftCorrectedRef.current = { x: pos.x, y: pos.y };
       else rightCorrectedRef.current = { x: pos.x, y: pos.y };
@@ -169,7 +168,8 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
     [dragging]
   );
 
-  const onPointerUp = useCallback(() => {
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
     setDragging(null);
   }, []);
 
@@ -203,7 +203,7 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
         <div
           ref={containerRef}
           className="relative rounded-xl overflow-hidden bg-black mx-auto"
-          style={{ maxWidth: videoSize.w, maxHeight: videoSize.h }}
+          style={{ maxWidth: Math.min(videoSize.w, typeof window !== "undefined" ? window.innerWidth - 48 : videoSize.w), maxHeight: videoSize.h }}
         >
           <video
             ref={videoRef as React.RefObject<HTMLVideoElement>}
@@ -215,14 +215,11 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
           <canvas
             ref={canvasRef}
             className="absolute inset-0 w-full h-full pointer-events-auto transform scale-x-[-1]"
-            style={{ maxHeight: "50vh" }}
-            onMouseDown={onPointerDown}
-            onMouseMove={onPointerMove}
-            onMouseUp={onPointerUp}
-            onMouseLeave={onPointerUp}
-            onTouchStart={onPointerDown}
-            onTouchMove={onPointerMove}
-            onTouchEnd={onPointerUp}
+            style={{ maxHeight: "50vh", touchAction: "none" }}
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            onPointerCancel={onPointerUp}
           />
         </div>
 

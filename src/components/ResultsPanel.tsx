@@ -11,6 +11,7 @@ import { useLang } from "@/contexts/LangContext";
 import HeatmapCanvas from "./HeatmapCanvas";
 import GazeReplay from "./GazeReplay";
 import type { ResultPerImage } from "@/types/results";
+import { IMAGE_DURATION_MS } from "@/constants";
 
 interface ResultsPanelProps {
   resultsPerImage?: ResultPerImage[];
@@ -24,8 +25,6 @@ interface ResultsPanelProps {
   onReset?: () => void;
   onRecalibrate: () => void;
 }
-
-const IMAGE_DURATION_MS = 20_000;
 
 export default function ResultsPanel({
   resultsPerImage,
@@ -226,7 +225,7 @@ export default function ResultsPanel({
     }
   };
 
-  if (!imageUrl || !imageDimensions) {
+  if (!imageUrl || !imageDimensions || (imageDimensions.width <= 0 && imageDimensions.height <= 0)) {
     return <div className="p-4 text-gray-400">{t.resultsLoading}</div>;
   }
 

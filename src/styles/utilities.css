@@ -52,6 +52,13 @@
   image-rendering: crisp-edges;
 }
 
+/* Touch-optimized tracking area */
+.tracking-area {
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
 /* Prefers color scheme */
 @media (prefers-color-scheme: dark) {
   .dark\:shadow-perf {

@@ -15,9 +15,8 @@ import PupilAlignStep from "./PupilAlignStep";
 import HeatmapCanvas from "./HeatmapCanvas";
 import ResultsPanel from "./ResultsPanel";
 
-const IMAGE_DURATION_MS = 20_000; // Her fotoğraf 20 saniye, otomatik geçiş
-
 import type { ResultPerImage } from "@/types/results";
+import { IMAGE_DURATION_MS, GAZE_UI_THROTTLE_MS } from "@/constants";
 
 export type { ResultPerImage };
 
@@ -124,6 +123,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const [showTransitionOverlay, setShowTransitionOverlay] = useState(false);
   const transitionPhotoNumRef = useRef(0);
   const [resizeWarning, setResizeWarning] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const calibratedScreenSize = useRef<{ w: number; h: number } | null>(null);
   const { t } = useLang();
 
@@ -156,11 +156,9 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const gazePointsRef = useRef<GazePoint[]>([]);
   const drawAnimRef = useRef<number>(0);
   const lastUiUpdateRef = useRef<number>(0);
-  const lastRawScreenPointRef = useRef<{ x: number; y: number } | null>(null);
   const showTransitionOverlayRef = useRef(false);
   const processingTimeRef = useRef(0);
   const lastFeatureTimestampRef = useRef(0);
-  const GAZE_UI_THROTTLE_MS = 100; // 80ms -> 100ms (10Hz UI update)
 
   const imageCount = imageUrls.length;
   const isMultiImage = imageCount > 1;
@@ -206,8 +204,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       imageRef.current = img;
       setImageLoaded(true);
       setImageNaturalDimensions({ width: img.naturalWidth, height: img.naturalHeight });
-      const maxW = Math.min(window.innerWidth * 0.92, 1400);
-      const maxH = Math.min(window.innerHeight * 0.82, 950);
+      const maxW = window.innerWidth * 0.95;
+      const maxH = window.innerHeight * 0.85;
       const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
       const dims = {
         width: Math.round(img.naturalWidth * scale),
@@ -343,16 +341,18 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     fixationDetectorRef.current = new FixationDetector();
     fixationDetectorRef.current.startTracking();
 
-    trackingTimerRef.current = setInterval(() => {
-      setTrackingDuration((prev) => prev + 100);
-    }, 100);
-
     transitionPhotoNumRef.current = idx + 1;
     setFixations([]);
     setMetrics(null);
+    // Süreyi ÖNCE sıfırla, sonra interval başlat (race condition önlenir)
     setTrackingDuration(0);
     setShowTransitionOverlay(true);
     setCurrentImageIndex(idx + 1);
+
+    // Interval'i state sıfırlandıktan sonra başlat
+    trackingTimerRef.current = setInterval(() => {
+      setTrackingDuration((prev) => prev + 100);
+    }, 100);
 
     // Flag'i en son sıfırla (requestAnimationFrame ile bir sonraki frame'e ertele)
     requestAnimationFrame(() => {
@@ -404,6 +404,79 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, [phase]);
+
+  // Fullscreen API
+  const requestFullscreen = useCallback(async () => {
+    try {
+      const elem = containerRef.current ?? document.documentElement;
+      if (elem.requestFullscreen) {
+        await elem.requestFullscreen();
+      } else if ((elem as any).webkitRequestFullscreen) {
+        await (elem as any).webkitRequestFullscreen();
+      }
+    } catch { /* kullanıcı reddedebilir */ }
+  }, []);
+
+  const exitFullscreen = useCallback(() => {
+    try {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+      } else if ((document as any).webkitExitFullscreen) {
+        (document as any).webkitExitFullscreen();
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  // Fullscreen state dinle
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener("fullscreenchange", handler);
+    document.addEventListener("webkitfullscreenchange", handler);
+    return () => {
+      document.removeEventListener("fullscreenchange", handler);
+      document.removeEventListener("webkitfullscreenchange", handler);
+    };
+  }, []);
+
+  // Ekran yönü kilidi (calibration + tracking fazlarında)
+  useEffect(() => {
+    if (phase !== "calibration" && phase !== "tracking") return;
+    let locked = false;
+    const lockOrientation = async () => {
+      try {
+        const orient = screen.orientation as ScreenOrientation & { lock?: (type: string) => Promise<void> };
+        if (orient?.lock) {
+          await orient.lock("any");
+          locked = true;
+        }
+      } catch { /* desteklenmiyor veya fullscreen gerekli */ }
+    };
+    lockOrientation();
+    return () => {
+      if (locked) {
+        try { screen.orientation?.unlock?.(); } catch { /* ignore */ }
+      }
+    };
+  }, [phase]);
+
+  // ResizeObserver ile responsive canvas boyutlandırma
+  useEffect(() => {
+    if (!imageContainerRef.current || !imageRef.current || phase !== "tracking") return;
+    const observer = new ResizeObserver(() => {
+      const img = imageRef.current;
+      if (!img) return;
+      const maxW = window.innerWidth * 0.95;
+      const maxH = window.innerHeight * 0.85;
+      const scale = Math.min(maxW / img.naturalWidth, maxH / img.naturalHeight);
+      const newDims = {
+        width: Math.round(img.naturalWidth * scale),
+        height: Math.round(img.naturalHeight * scale),
+      };
+      setImageDimensions(newDims);
+    });
+    observer.observe(imageContainerRef.current);
+    return () => observer.disconnect();
+  }, [phase, imageLoaded]);
 
   // Görüntünün ekrandaki gerçek pozisyonunu al
   const getImageRect = useCallback((): DOMRect | null => {
@@ -476,8 +549,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       const featureTimestamp = performance.now();
       const frameTime = featureTimestamp - lastFeatureTimestampRef.current;
       
-      // Skip frames if processing is slow
-      const targetFrameTime = processingTimeRef.current > 10 ? 50 : 33; // 20fps veya 30fps
+      // Skip frames if processing is slow (daha toleranslı: 25fps veya 30fps)
+      const targetFrameTime = processingTimeRef.current > 15 ? 40 : 33;
       if (frameTime < targetFrameTime) return;
       
       lastFeatureTimestampRef.current = featureTimestamp;
@@ -505,8 +578,6 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       // Processing time tracking
       processingTimeRef.current = performance.now() - processStart;
 
-      lastRawScreenPointRef.current = { x: screenPoint.x, y: screenPoint.y };
-
       const dims = imageDimsRef.current;
       const natDims = imageNatDimsRef.current;
 
@@ -533,16 +604,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
             const diagSize = Math.sqrt(content.contentW ** 2 + content.contentH ** 2);
             const overDist = Math.sqrt(overX ** 2 + overY ** 2);
 
-            // %10'dan fazla dışarıdaysa tamamen reddet (kenar fiksasyon şişirmesini önle)
-            if (overDist > diagSize * 0.10) {
+            // %15'ten fazla dışarıdaysa tamamen reddet (daha toleranslı — kenar bakışlarını kaybetme)
+            if (overDist > diagSize * 0.15) {
               if (shouldLog) logger.log("[Tracking] İçerik dışı nokta reddedildi:", Math.round(overDist), "px dışarıda");
               return;
             }
 
             screenPoint.x = Math.max(left, Math.min(right, px));
             screenPoint.y = Math.max(top, Math.min(bottom, py));
-            const penalty = Math.min(1, overDist / (diagSize * 0.10));
-            screenPoint.confidence *= (1 - penalty * 0.8);
+            const penalty = Math.min(1, overDist / (diagSize * 0.15));
+            screenPoint.confidence *= (1 - penalty * 0.6);
           }
         }
       }
@@ -633,7 +704,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       clearInterval(trackingTimerRef.current);
       trackingTimerRef.current = null;
     }
-    
+
     if (autoRecalTimerRef.current) {
       clearInterval(autoRecalTimerRef.current);
       autoRecalTimerRef.current = null;
@@ -642,10 +713,33 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     fixationDetectorRef.current.stopTracking();
     faceTrackerRef.current.stopTracking();
 
-    const results = fixationDetectorRef.current.getMetrics();
-    setMetrics(results);
+    const currentMetrics = fixationDetectorRef.current.getMetrics();
+    setMetrics(currentMetrics);
+
+    // Çoklu fotoğraf modunda: mevcut fotoğrafın verisini kaydet ve TÜM sonuçları birleştir
+    if (isMultiImage) {
+      const idx = currentImageIndex;
+      gazePointsByImageRef.current[idx] = [...gazePointsRef.current];
+      fixationsByImageRef.current[idx] = fixationDetectorRef.current.getFixations();
+      metricsByImageRef.current[idx] = currentMetrics;
+      dimensionsByImageRef.current[idx] = imageDimensions;
+
+      const results: ResultPerImage[] = imageUrls.map((url, i) => ({
+        imageUrl: url,
+        gazePoints: gazePointsByImageRef.current[i] ?? [],
+        fixations: fixationsByImageRef.current[i] ?? [],
+        metrics: metricsByImageRef.current[i] ?? null,
+        imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
+      }));
+      // Verisi olan sonuçları göster
+      const nonEmpty = results.filter(r => r.gazePoints.length > 0 || r.metrics !== null);
+      if (nonEmpty.length > 0) {
+        setResultsPerImage(nonEmpty);
+      }
+    }
+
     setPhase("results");
-  }, []);
+  }, [isMultiImage, currentImageIndex, imageUrls, imageDimensions]);
 
   // Klavye kısayolları (takip ekranında)
   useEffect(() => {
@@ -1027,9 +1121,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
               )}
               {resizeWarning && (
                 <span className="text-amber-400 text-sm font-medium animate-pulse">
-                  ⚠ Pencere boyutu değişti
+                  Pencere boyutu degisti
                 </span>
               )}
+              <button
+                onClick={isFullscreen ? exitFullscreen : requestFullscreen}
+                className="ml-auto text-gray-400 hover:text-white text-sm px-3 py-1 rounded-lg border border-gray-700 hover:border-gray-500 transition-colors min-h-[44px] min-w-[44px]"
+                aria-label={isFullscreen ? "Tam ekrandan cik" : "Tam ekran"}
+              >
+                {isFullscreen ? "Kucult" : "Tam Ekran"}
+              </button>
             </div>
             {isMultiImage && isTracking && (
               <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden" role="progressbar" aria-valuenow={Math.min(100, Math.round((trackingDuration / IMAGE_DURATION_MS) * 100))} aria-valuemin={0} aria-valuemax={100}>
@@ -1044,7 +1145,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
           {/* Görüntü + Overlay */}
           <div
             ref={imageContainerRef}
-            className="relative border-2 border-gray-700 rounded-lg overflow-hidden shadow-2xl"
+            className={`relative border-2 border-gray-700 rounded-lg overflow-hidden shadow-2xl${isTracking ? " tracking-area" : ""}`}
             style={{
               width: imageDimensions.width,
               height: imageDimensions.height,

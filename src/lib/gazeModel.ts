@@ -11,6 +11,8 @@
 import { logger } from "./logger";
 import { KalmanFilter2D } from "./kalmanFilter";
 import { AdvancedIrisDetector } from "./advancedIrisDetection";
+import { createInlineWorker, postWorkerMessage } from "./workers/createWorker";
+import { gazeModelTrainWorkerFn, type TrainWorkerInput, type TrainWorkerOutput } from "./workers/gazeModelTrainWorker";
 
 export interface EyeFeatures {
   // Ham iris koordinatları (MediaPipe normalized 0-1)
@@ -768,9 +770,9 @@ export class GazeModel {
       const screenMax = typeof window !== "undefined"
         ? Math.max(window.innerWidth, window.innerHeight)
         : 1920;
-      // Daha gevşek eşik: daha az nokta reddedilsin, heatmap verisi toplanabilsin
-      const baseThreshold = screenMax * 0.22;
-      const velocityBonus = Math.min(avgVelocity * 120, screenMax * 0.2);
+      // Gevşek eşik: gaze noktası kaybını önle, heatmap verisi toplansın
+      const baseThreshold = screenMax * 0.28;
+      const velocityBonus = Math.min(avgVelocity * 150, screenMax * 0.25);
       const jumpThreshold = baseThreshold + velocityBonus;
 
       if (dist > jumpThreshold) {
@@ -933,6 +935,162 @@ export class GazeModel {
     this.driftOffsetX = 0;
     this.driftOffsetY = 0;
     logger.log("[GazeModel] Afin düzeltme uygulandı:", this.affineCorrection);
+  }
+
+  /**
+   * Asenkron model eğitimi — ağır LOGO-CV ve ridge regression hesaplarını Worker'da çalıştırır.
+   * Worker yoksa veya başarısız olursa sync train() fallback kullanır.
+   */
+  async trainAsync(samples: CalibrationSample[]): Promise<{ meanError: number; maxError: number }> {
+    // Outlier temizle
+    const cleanSamples = removeOutliers(samples);
+    if (cleanSamples.length < 80) {
+      throw new Error("Yeterli kalibrasyon verisi yok (en az 80 örnek gerekli)");
+    }
+
+    // Referans poz hesapla
+    const refYaw = cleanSamples.reduce((s, sp) => s + sp.features.yaw, 0) / cleanSamples.length;
+    const refPitch = cleanSamples.reduce((s, sp) => s + sp.features.pitch, 0) / cleanSamples.length;
+    const refRoll = cleanSamples.reduce((s, sp) => s + sp.features.roll, 0) / cleanSamples.length;
+    const refScale = cleanSamples.reduce((s, sp) => s + sp.features.faceScale, 0) / cleanSamples.length;
+    this.refPose = { yaw: refYaw, pitch: refPitch, roll: refRoll, faceScale: refScale };
+
+    const rawInputs = cleanSamples.map((s) => this.featuresToInput(s.features));
+    const validMask = rawInputs.map(row => row.every(v => isFinite(v)));
+    if (validMask.some(v => !v)) {
+      // NaN var, sync fallback
+      return this.train(samples);
+    }
+
+    this.computeNormalization(rawInputs);
+
+    const targetsX = cleanSamples.map((s) => s.targetX);
+    const targetsY = cleanSamples.map((s) => s.targetY);
+
+    const screenCenterX = targetsX.reduce((s, v) => s + v, 0) / targetsX.length;
+    const screenCenterY = targetsY.reduce((s, v) => s + v, 0) / targetsY.length;
+    const screenDiag = Math.sqrt(
+      Math.max(...targetsX.map(x => (x - screenCenterX) ** 2)) +
+      Math.max(...targetsY.map(y => (y - screenCenterY) ** 2))
+    ) || 1;
+
+    const sampleWeights = cleanSamples.map((s) => {
+      const confWeight = Math.max(0.15, s.features.confidence);
+      const dist = Math.sqrt((s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2);
+      const spatialWeight = 1 + 0.6 * (dist / screenDiag);
+      return confWeight * spatialWeight;
+    });
+
+    // Grup indekslerini hazırla
+    const pointGroups = new Map<string, number[]>();
+    for (let i = 0; i < cleanSamples.length; i++) {
+      const key = `${cleanSamples[i].targetX.toFixed(0)}_${cleanSamples[i].targetY.toFixed(0)}`;
+      if (!pointGroups.has(key)) pointGroups.set(key, []);
+      pointGroups.get(key)!.push(i);
+    }
+    const groupKeys = Array.from(pointGroups.keys());
+    const groupIndices: Record<string, number[]> = {};
+    for (const [k, v] of pointGroups) groupIndices[k] = v;
+
+    // Worker oluştur
+    const worker = createInlineWorker(gazeModelTrainWorkerFn);
+    if (!worker) {
+      return this.train(samples);
+    }
+
+    try {
+      const lambdaCandidates = [0.0005, 0.001, 0.002, 0.004, 0.008, 0.015, 0.02, 0.05, 0.1];
+
+      const input: TrainWorkerInput = {
+        type: "train",
+        rawInputs,
+        targetsX,
+        targetsY,
+        sampleWeights,
+        featureMeans: this.featureMeans,
+        featureStds: this.featureStds,
+        lambdaCandidates,
+        defaultLambda: this.lambda,
+        groupKeys,
+        groupIndices,
+      };
+
+      const result = await postWorkerMessage<TrainWorkerInput, TrainWorkerOutput>(
+        worker,
+        input,
+        [],
+        30000 // 30s timeout
+      );
+
+      this.weightsX = result.weightsX;
+      this.weightsY = result.weightsY;
+      this.lambda = result.bestLambda;
+      this.trained = true;
+
+      logger.log("[GazeModel] Worker training tamamlandı, lambda:", result.bestLambda, "CV:", result.cvError.toFixed(1));
+
+      // Residual cleanup + retrain (sync — hızlı)
+      const residuals = cleanSamples.map((s, i) => {
+        const pred = this.predictRaw(s.features);
+        const rawErr = pred ? Math.sqrt((pred.x - s.targetX) ** 2 + (pred.y - s.targetY) ** 2) : 9999;
+        const distFromCenter = Math.sqrt((s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2);
+        const edgeFactor = 1 + 0.5 * (distFromCenter / screenDiag);
+        return { i, err: rawErr / edgeFactor };
+      });
+      residuals.sort((a, b) => b.err - a.err);
+      const dropCount = Math.min(Math.floor(cleanSamples.length * 0.12), Math.max(0, cleanSamples.length - 80));
+
+      if (dropCount > 0) {
+        const dropSet = new Set(residuals.slice(0, dropCount).map(r => r.i));
+        const cleanSamples2 = cleanSamples.filter((_, i) => !dropSet.has(i));
+        const rawInputs2 = cleanSamples2.map(s => this.featuresToInput(s.features));
+        this.computeNormalization(rawInputs2);
+        const polyFeatures2: number[][] = [];
+        for (const inp of rawInputs2) {
+          const normalized = inp.map((val, i) => {
+            const std = this.featureStds[i] || 1;
+            return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+          });
+          polyFeatures2.push(createSelectivePolynomialFeatures(normalized));
+        }
+        const targetsX2 = cleanSamples2.map(s => s.targetX);
+        const targetsY2 = cleanSamples2.map(s => s.targetY);
+        const screenCenterX2 = targetsX2.reduce((s, v) => s + v, 0) / targetsX2.length;
+        const screenCenterY2 = targetsY2.reduce((s, v) => s + v, 0) / targetsY2.length;
+        const screenDiag2 = Math.sqrt(
+          Math.max(...targetsX2.map(x => (x - screenCenterX2) ** 2)) +
+          Math.max(...targetsY2.map(y => (y - screenCenterY2) ** 2))
+        ) || 1;
+        const sampleWeights2 = cleanSamples2.map(s => {
+          const confW = Math.max(0.15, s.features.confidence);
+          const d = Math.sqrt((s.targetX - screenCenterX2) ** 2 + (s.targetY - screenCenterY2) ** 2);
+          return confW * (1 + 0.6 * (d / screenDiag2));
+        });
+        this.weightsX = ridgeRegression(polyFeatures2, targetsX2, this.lambda, sampleWeights2);
+        this.weightsY = ridgeRegression(polyFeatures2, targetsY2, this.lambda, sampleWeights2);
+      }
+
+      // Final hata hesapla
+      const finalSamples = dropCount > 0
+        ? cleanSamples.filter((_, i) => !new Set(residuals.slice(0, dropCount).map(r => r.i)).has(i))
+        : cleanSamples;
+      let totalError = 0, maxError = 0;
+      for (const s of finalSamples) {
+        const pred = this.predictRaw(s.features);
+        if (pred) {
+          const error = Math.sqrt((pred.x - s.targetX) ** 2 + (pred.y - s.targetY) ** 2);
+          totalError += error;
+          maxError = Math.max(maxError, error);
+        }
+      }
+
+      return { meanError: totalError / finalSamples.length, maxError };
+    } catch (err) {
+      logger.warn("[GazeModel] Worker başarısız, sync fallback:", err);
+      return this.train(samples);
+    } finally {
+      worker.terminate();
+    }
   }
 
   getDriftOffset(): { x: number; y: number } {

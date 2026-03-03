@@ -28,14 +28,34 @@ export default function HeatmapCanvas({
     if (!canvasRef.current) return;
     if (gazePoints.length === 0 && fixations.length === 0) return;
 
-    generatorRef.current.render(
-      canvasRef.current,
-      gazePoints,
-      fixations,
-      width,
-      height
-    );
+    let cancelled = false;
+
+    generatorRef.current
+      .renderAsync(canvasRef.current, gazePoints, fixations, width, height)
+      .catch(() => {
+        // Async başarısız olursa sync fallback
+        if (!cancelled && canvasRef.current) {
+          generatorRef.current.render(
+            canvasRef.current,
+            gazePoints,
+            fixations,
+            width,
+            height
+          );
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, [gazePoints, fixations, width, height]);
+
+  // Cleanup worker on unmount
+  useEffect(() => {
+    return () => {
+      generatorRef.current?.destroy();
+    };
+  }, []);
 
   return (
     <canvas

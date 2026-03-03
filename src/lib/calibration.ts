@@ -110,9 +110,9 @@ export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: 0.12,
+    headMovement: 0.10,
     minConfidence: 0.3,
-    minEyeOpenness: 0.08,
+    minEyeOpenness: 0.12,
   }
 ): StabilityCheck {
   if (features.confidence < thresholds.minConfidence) {
@@ -362,7 +362,7 @@ export class CalibrationManager {
         });
         return true;
       }
-      this.trainModel();
+      this.trainModel(); // async — hatalar içeride handle ediliyor
       return false;
     }
 
@@ -378,7 +378,7 @@ export class CalibrationManager {
     return true;
   }
 
-  private trainModel(): void {
+  private async trainModel(): Promise<void> {
     try {
       logger.log("[Calibration] Model eğitimi başlıyor. Toplam örnek:", this.state.samples.length);
 
@@ -396,7 +396,14 @@ export class CalibrationManager {
         });
       }
 
-      const result = this.model.train(this.state.samples);
+      // Web Worker ile async training (UI donmasını önler)
+      let result: { meanError: number; maxError: number };
+      try {
+        result = await this.model.trainAsync(this.state.samples);
+      } catch {
+        // Async başarısız olursa sync fallback
+        result = this.model.train(this.state.samples);
+      }
 
       logger.log("[Calibration] Eğitim tamamlandı. MeanError:", Math.round(result.meanError), "px, MaxError:", Math.round(result.maxError), "px");
       logger.log("[Calibration] Model trained:", this.model.isTrained());

@@ -11,6 +11,8 @@
 
 import { GazePoint } from "./gazeModel";
 import { Fixation } from "./fixation";
+import { createInlineWorker, postWorkerMessage } from "./workers/createWorker";
+import { heatmapWorkerFn, type HeatmapWorkerInput, type HeatmapWorkerOutput } from "./workers/heatmapWorker";
 
 export interface HeatmapConfig {
   radius: number;
@@ -48,6 +50,10 @@ export class HeatmapGenerator {
   private gradientCtx: CanvasRenderingContext2D | null = null;
 
   private canvasCache = new Map<string, HTMLCanvasElement>();
+
+  // Web Worker for offloading pixel-by-pixel colorization
+  private colorizeWorker: Worker | null = null;
+  private workerInitialized: boolean = false;
 
   constructor(config: Partial<HeatmapConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -302,6 +308,106 @@ export class HeatmapGenerator {
     exportCtx.drawImage(heatmapCanvas, 0, 0);
 
     return exportCanvas.toDataURL("image/png");
+  }
+
+  /**
+   * Asenkron heatmap render — colorization adımı Web Worker'da çalışır.
+   * Canvas API gerektiren intensity ve blur adımları main thread'de kalır.
+   * Worker yoksa sync fallback kullanır.
+   */
+  async renderAsync(
+    canvas: HTMLCanvasElement,
+    points: GazePoint[],
+    fixations: Fixation[],
+    imageWidth: number,
+    imageHeight: number
+  ): Promise<void> {
+    if (typeof document === "undefined") return;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    this.ensureGradientPalette();
+
+    canvas.width = imageWidth;
+    canvas.height = imageHeight;
+
+    const intensityCanvas = this.getOrCreateCanvas("intensity", imageWidth, imageHeight);
+    const intensityCtx = intensityCanvas.getContext("2d");
+    if (!intensityCtx) return;
+
+    if (this.config.useFixations && fixations.length > 0) {
+      this.renderFixationHeatmap(intensityCtx, fixations);
+    } else if (points.length > 0) {
+      this.renderGazeHeatmap(intensityCtx, points);
+    } else {
+      ctx.clearRect(0, 0, imageWidth, imageHeight);
+      return;
+    }
+
+    const blurredCanvas = this.getOrCreateCanvas("blurred", imageWidth, imageHeight);
+    const blurredCtx = blurredCanvas.getContext("2d");
+    if (!blurredCtx) return;
+
+    const supportsFilter = "filter" in blurredCtx;
+    if (supportsFilter) {
+      blurredCtx.filter = `blur(${this.config.blur}px)`;
+    }
+    blurredCtx.drawImage(intensityCanvas, 0, 0);
+    if (supportsFilter) {
+      blurredCtx.filter = "none";
+    }
+
+    // Worker ile colorize
+    if (!this.workerInitialized) {
+      this.colorizeWorker = createInlineWorker(heatmapWorkerFn);
+      this.workerInitialized = true;
+    }
+
+    if (this.colorizeWorker && this.gradientCtx) {
+      try {
+        const intensityData = blurredCtx.getImageData(0, 0, imageWidth, imageHeight);
+        const palette = this.gradientCtx.getImageData(0, 0, 256, 1).data;
+
+        const input: HeatmapWorkerInput = {
+          type: "colorize",
+          intensityData: new Uint8ClampedArray(intensityData.data),
+          palette: new Uint8ClampedArray(palette),
+          width: imageWidth,
+          height: imageHeight,
+          minOpacity: this.config.minOpacity,
+          maxOpacity: this.config.maxOpacity,
+        };
+
+        const result = await postWorkerMessage<HeatmapWorkerInput, HeatmapWorkerOutput>(
+          this.colorizeWorker,
+          input,
+          [input.intensityData.buffer, input.palette.buffer]
+        );
+
+        const outputImageData = ctx.createImageData(imageWidth, imageHeight);
+        outputImageData.data.set(result.outputData);
+        ctx.putImageData(outputImageData, 0, 0);
+        return;
+      } catch {
+        // Worker başarısız olursa sync fallback
+      }
+    }
+
+    // Sync fallback
+    this.colorize(ctx, blurredCtx, imageWidth, imageHeight);
+  }
+
+  /**
+   * Worker'ı sonlandırır ve kaynakları temizler.
+   */
+  destroy(): void {
+    if (this.colorizeWorker) {
+      this.colorizeWorker.terminate();
+      this.colorizeWorker = null;
+    }
+    this.workerInitialized = false;
+    this.canvasCache.clear();
   }
 
   updateConfig(config: Partial<HeatmapConfig>): void {

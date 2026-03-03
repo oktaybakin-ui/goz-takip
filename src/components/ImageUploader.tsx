@@ -4,6 +4,7 @@ import React, { useState, useRef, useCallback, useEffect } from "react";
 import NextImage from "next/image";
 import { useLang } from "@/contexts/LangContext";
 import { cropImagesToFace } from "@/lib/faceCrop";
+import { CROP_TIMEOUT_MS } from "@/constants";
 
 const MIN_IMAGE_COUNT = 1;
 const MAX_IMAGE_COUNT = 10;
@@ -115,7 +116,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
       timedOut = true;
       onImagesSelected(previews);
       setIsCropping(false);
-    }, 20000);
+    }, CROP_TIMEOUT_MS);
     try {
       const cropped = await cropImagesToFace(
         previews,
@@ -136,6 +137,20 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
     if (previews.length < MIN_IMAGE_COUNT || previews.length > MAX_IMAGE_COUNT) return;
     onImagesSelected(previews);
   }, [previews, onImagesSelected]);
+
+  // Mobil sanal klavye açılınca aktif input'u görünüme kaydır
+  useEffect(() => {
+    const vv = typeof window !== "undefined" ? window.visualViewport : null;
+    if (!vv) return;
+    const handleResize = () => {
+      const active = document.activeElement;
+      if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) {
+        (active as HTMLElement).scrollIntoView({ block: "center", behavior: "smooth" });
+      }
+    };
+    vv.addEventListener("resize", handleResize);
+    return () => vv.removeEventListener("resize", handleResize);
+  }, []);
 
   const canStart = previews.length >= MIN_IMAGE_COUNT && previews.length <= MAX_IMAGE_COUNT;
 

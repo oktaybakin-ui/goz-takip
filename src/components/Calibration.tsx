@@ -77,7 +77,7 @@ export default function Calibration({
     setSampleProgress(0);
     samplingRef.current = false;
 
-    let count = 0;  // Geri sayım yok - anında başla
+    let count = 2;  // 2 saniye geri sayım — kullanıcı noktayı bulup odaklansın
     setCountdown(count);
 
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -88,6 +88,7 @@ export default function Calibration({
 
       if (count <= 0) {
         if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+        countdownTimerRef.current = null;
         samplingRef.current = true;
 
         if (isValidation) {
