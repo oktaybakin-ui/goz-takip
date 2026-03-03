@@ -56,6 +56,7 @@ export function postWorkerMessage<TInput, TOutput>(
 ): Promise<TOutput> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      worker.removeEventListener("message", handler);
       reject(new Error("Worker timeout"));
     }, timeoutMs);
 

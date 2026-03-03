@@ -31,6 +31,7 @@ export default function Calibration({
   const [sampleProgress, setSampleProgress] = useState(0);
   const [currentPoint, setCurrentPoint] = useState<CalibrationPoint | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  const [isTraining, setIsTraining] = useState(false);
 
   const managerRef = useRef<CalibrationManager | null>(null);
   const samplingRef = useRef(false);
@@ -104,9 +105,13 @@ export default function Calibration({
     const pointStartTime = Date.now();
     const POINT_TIMEOUT_MS = 8000;  // 12s → 8s
 
-    const advanceToNext = () => {
+    const advanceToNext = async () => {
       samplingRef.current = false;
-      const hasMore = manager.nextPoint();
+
+      setIsTraining(true);
+      const hasMore = await manager.nextPoint();
+      setIsTraining(false);
+
       if (hasMore) {
         startPointCollection(manager, false);
       } else {
@@ -395,8 +400,17 @@ export default function Calibration({
         </div>
       )}
 
+      {/* Model eğitiliyor göstergesi */}
+      {isTraining && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-gray-950">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-6" />
+          <p className="text-white text-xl font-semibold mb-2">Model eğitiliyor...</p>
+          <p className="text-gray-400 text-sm">Lütfen bekleyin, bu birkaç saniye sürebilir.</p>
+        </div>
+      )}
+
       {/* Kalibrasyon / Doğrulama noktası gösterimi */}
-      {(state.phase === "calibrating" || state.phase === "validating") && currentPoint && (
+      {(state.phase === "calibrating" || state.phase === "validating") && !isTraining && currentPoint && (
         <div className="fixed inset-0">
           {/* Kalibrasyon noktası */}
           <div

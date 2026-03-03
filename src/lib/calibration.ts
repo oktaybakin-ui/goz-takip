@@ -331,7 +331,7 @@ export class CalibrationManager {
     return pointSamples.length >= this.MIN_SAMPLES_PER_POINT;
   }
 
-  nextPoint(): boolean {
+  async nextPoint(): Promise<boolean> {
     const currentPoint = this.getCurrentPoint();
     if (currentPoint) {
       const quality = this.pointQuality.get(currentPoint.id) ?? 0;
@@ -362,7 +362,7 @@ export class CalibrationManager {
         });
         return true;
       }
-      this.trainModel(); // async — hatalar içeride handle ediliyor
+      await this.trainModel();
       return false;
     }
 
