@@ -80,7 +80,46 @@ export class MultiModelEnsemble {
     // Initial equal weights
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
   }
-  
+
+  /**
+   * Async train — her model arasında UI thread'e kontrol verir (donma önler)
+   */
+  async trainAsync(samples: CalibrationSample[]): Promise<void> {
+    if (samples.length < 50) {
+      logger.warn('[Ensemble] Insufficient samples for ensemble training');
+      try { await this.models[0].trainAsync(samples); } catch { this.models[0].train(samples); }
+      this.modelWeights = [1, 0, 0];
+      return;
+    }
+
+    for (let i = 0; i < this.config.modelConfigs.length; i++) {
+      const config = this.config.modelConfigs[i];
+      const model = this.models[i];
+      let trainSamples = [...samples];
+
+      if (config.sampleWeight === 'confidence') {
+        trainSamples = this.oversampleByConfidence(samples);
+      } else if (config.sampleWeight === 'temporal') {
+        trainSamples = this.weightByTime(samples);
+      }
+
+      if (i > 0) {
+        trainSamples = this.addNoiseToSamples(trainSamples, 0.005 * i);
+      }
+
+      try {
+        await model.trainAsync(trainSamples);
+      } catch {
+        model.train(trainSamples);
+      }
+
+      // UI thread'e kontrol ver
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
+  }
+
   /**
    * Get ensemble prediction
    */

@@ -375,18 +375,21 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   // Kalibrasyon tamamlandı (bias CalibrationManager içinde modele uygulandı)
   const handleCalibrationComplete = useCallback((meanError: number, samples?: any[]) => {
     setCalibrationError(meanError);
-    
-    // Ensemble'ı eğit (eğer samples varsa)
-    if (samples && samples.length > 0 && ensembleRef.current) {
-      logger.log("[EyeTracker] Training ensemble with", samples.length, "samples");
-      ensembleRef.current.train(samples);
-    }
-    
     setPhase("tracking");
-    
+
     // Kalibrasyon yapılan ekran boyutunu kaydet
     calibratedScreenSize.current = { w: window.innerWidth, h: window.innerHeight };
     setResizeWarning(false);
+
+    // Ensemble eğitimini async başlat — UI donmasını önler
+    if (samples && samples.length > 0 && ensembleRef.current) {
+      const ensemble = ensembleRef.current;
+      logger.log("[EyeTracker] Training ensemble with", samples.length, "samples");
+      ensemble.trainAsync(samples).catch((err) => {
+        logger.warn("[EyeTracker] Ensemble async training failed, trying sync:", err);
+        try { ensemble.train(samples); } catch { /* ignore */ }
+      });
+    }
   }, []);
 
   // Pencere boyutu değiştiğinde kalibrasyon uyarısı
