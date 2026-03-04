@@ -1,6 +1,11 @@
 /**
- * Advanced Iris Detection using computer vision techniques
- * Improves upon MediaPipe's iris detection with additional processing
+ * Advanced Iris Detection — deterministik, kararlı iris merkezi tespiti.
+ *
+ * RANSAC kaldırıldı (5 noktada rastgele örnekleme frame-to-frame titreşim yaratıyordu).
+ * Yerine:
+ *  1. Least-squares circle fit (tüm noktaları kullanır, deterministik)
+ *  2. Güçlü temporal smoothing (exponential MA, 12 frame geçmiş, yavaş decay)
+ *  3. Ellipse fitting (perspektif kompanzasyonu)
  */
 
 import { logger } from './logger';
@@ -19,61 +24,83 @@ export interface IrisFeatures {
 }
 
 export class AdvancedIrisDetector {
-  // Iris detection parameters
-  private readonly IRIS_RADIUS_RATIO = 0.15; // Typical iris/eye width ratio
+  private readonly IRIS_RADIUS_RATIO = 0.15;
   private readonly MIN_IRIS_RADIUS = 0.005;
   private readonly MAX_IRIS_RADIUS = 0.025;
-  
-  // History for temporal smoothing
+
+  // Temporal smoothing geçmişi — uzun geçmiş + yavaş decay = kararlı çıktı
   private irisHistory: Map<'left' | 'right', IrisFeatures[]> = new Map([
     ['left', []],
     ['right', []]
   ]);
-  private readonly HISTORY_SIZE = 10;
-  
-  // Ellipse fitting for better accuracy
+  private readonly HISTORY_SIZE = 12;
+
+  // Son kararlı pozisyon (EMA ile sürekli güncellenir)
+  private lastStable: Map<'left' | 'right', { x: number; y: number } | null> = new Map([
+    ['left', null],
+    ['right', null]
+  ]);
+  private readonly EMA_ALPHA = 0.35; // 0=tamamen geçmiş, 1=tamamen yeni. 0.35 = güçlü smoothing
+
   private useEllipseFitting: boolean = true;
-  
+
   /**
-   * Detect iris with enhanced accuracy using multiple techniques
+   * Deterministik iris tespiti: least-squares circle fit + EMA + temporal smoothing
    */
   detectIris(
     eyeLandmarks: Array<{ x: number; y: number }>,
     irisLandmarks: Array<{ x: number; y: number }>,
     eyeType: 'left' | 'right'
   ): IrisFeatures {
-    // Basic iris center from landmarks
     const basicCenter = this.computeCentroid(irisLandmarks);
-    
-    // Compute eye dimensions
     const eyeBounds = this.computeBoundingBox(eyeLandmarks);
     const eyeWidth = eyeBounds.maxX - eyeBounds.minX;
-    
-    // Refined center using RANSAC
-    const ransacCenter = this.ransacCircleFit(irisLandmarks);
-    
-    // Combine basic and RANSAC centers
-    const combinedCenter = {
-      x: basicCenter.x * 0.4 + ransacCenter.center.x * 0.6,
-      y: basicCenter.y * 0.4 + ransacCenter.center.y * 0.6
-    };
-    
-    // Estimate iris radius
-    let irisRadius = this.estimateIrisRadius(irisLandmarks, combinedCenter, eyeWidth);
-    
-    // Apply temporal smoothing
+
+    // Deterministik least-squares circle fit (RANSAC yerine — rastgelelik yok)
+    const lsCircle = this.leastSquaresCircleFit(irisLandmarks);
+
+    // Centroid ve LS circle'ı birleştir (LS daha doğru ama centroid daha kararlı)
+    let combinedCenter: { x: number; y: number };
+    if (lsCircle) {
+      combinedCenter = {
+        x: basicCenter.x * 0.3 + lsCircle.x * 0.7,
+        y: basicCenter.y * 0.3 + lsCircle.y * 0.7
+      };
+    } else {
+      combinedCenter = basicCenter;
+    }
+
+    // EMA smoothing: ani sıçramaları bastır
+    const lastPos = this.lastStable.get(eyeType);
+    if (lastPos) {
+      const dist = Math.sqrt((combinedCenter.x - lastPos.x) ** 2 + (combinedCenter.y - lastPos.y) ** 2);
+      // Büyük sıçrama: saccade olabilir → daha hızlı takip et
+      const alpha = dist > 0.03 ? 0.6 : this.EMA_ALPHA;
+      combinedCenter = {
+        x: alpha * combinedCenter.x + (1 - alpha) * lastPos.x,
+        y: alpha * combinedCenter.y + (1 - alpha) * lastPos.y
+      };
+    }
+    this.lastStable.set(eyeType, { ...combinedCenter });
+
+    const irisRadius = this.estimateIrisRadius(irisLandmarks, combinedCenter, eyeWidth);
+
+    // Confidence: LS fit kalitesi
+    const confidence = lsCircle ? lsCircle.fitness : 0.5;
+
+    // Temporal smoothing (geçmiş frame'lerle ağırlıklı ortalama)
     const smoothedFeatures = this.temporalSmoothing({
       center: combinedCenter,
       radius: irisRadius,
-      confidence: ransacCenter.confidence
+      confidence
     }, eyeType);
-    
-    // Ellipse fitting for perspective compensation
+
+    // Ellipse fitting
     let ellipseParams;
     if (this.useEllipseFitting && irisLandmarks.length >= 5) {
       ellipseParams = this.fitEllipse(irisLandmarks);
     }
-    
+
     return {
       center: smoothedFeatures.center,
       radius: smoothedFeatures.radius,
@@ -81,119 +108,92 @@ export class AdvancedIrisDetector {
       ellipse: ellipseParams
     };
   }
-  
+
   /**
-   * RANSAC circle fitting for robust iris center detection
+   * Least-squares circle fit (Kåsa yöntemi) — deterministik, tüm noktaları kullanır.
+   * RANSAC'ın aksine her frame aynı girdiyle aynı sonucu verir → titreşim yok.
    */
-  private ransacCircleFit(
-    points: Array<{ x: number; y: number }>,
-    iterations: number = 50
-  ): { center: { x: number; y: number }; radius: number; confidence: number } {
-    if (points.length < 3) {
-      return {
-        center: this.computeCentroid(points),
-        radius: 0.01,
-        confidence: 0.1
-      };
+  private leastSquaresCircleFit(
+    points: Array<{ x: number; y: number }>
+  ): { x: number; y: number; r: number; fitness: number } | null {
+    const n = points.length;
+    if (n < 3) return null;
+
+    // Kåsa method: minimize algebraic distance
+    // Solve: [x_i^2+y_i^2, x_i, y_i, 1] * [A, B, C, D]^T = 0
+    // Center = (-B/2A, -C/2A), R = sqrt(B^2+C^2-4AD) / (2|A|)
+
+    let sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0;
+    let sumXY = 0, sumX3 = 0, sumY3 = 0, sumX2Y = 0, sumXY2 = 0;
+
+    for (const p of points) {
+      const x2 = p.x * p.x;
+      const y2 = p.y * p.y;
+      sumX += p.x;
+      sumY += p.y;
+      sumX2 += x2;
+      sumY2 += y2;
+      sumXY += p.x * p.y;
+      sumX3 += x2 * p.x;
+      sumY3 += y2 * p.y;
+      sumX2Y += x2 * p.y;
+      sumXY2 += p.x * y2;
     }
-    
-    let bestCenter = { x: 0, y: 0 };
-    let bestRadius = 0;
-    let bestInliers = 0;
-    
-    for (let i = 0; i < iterations; i++) {
-      // Randomly select 3 points
-      const indices = this.randomSample(points.length, 3);
-      const p1 = points[indices[0]];
-      const p2 = points[indices[1]];
-      const p3 = points[indices[2]];
-      
-      // Fit circle through 3 points
-      const circle = this.circleFrom3Points(p1, p2, p3);
-      if (!circle) continue;
-      
-      // Count inliers
-      const threshold = 0.003; // 0.3% of image
-      let inliers = 0;
-      
-      points.forEach(p => {
-        const dist = Math.sqrt((p.x - circle.x) ** 2 + (p.y - circle.y) ** 2);
-        if (Math.abs(dist - circle.r) < threshold) {
-          inliers++;
-        }
-      });
-      
-      if (inliers > bestInliers) {
-        bestInliers = inliers;
-        bestCenter = { x: circle.x, y: circle.y };
-        bestRadius = circle.r;
-      }
+
+    // Normal equations: A * [a, b]^T = B where center = (a, b)
+    const A11 = sumX2 - sumX * sumX / n;
+    const A12 = sumXY - sumX * sumY / n;
+    const A22 = sumY2 - sumY * sumY / n;
+
+    const b1 = 0.5 * (sumX3 - sumX * sumX2 / n + sumXY2 - sumX * sumY2 / n);
+    const b2 = 0.5 * (sumX2Y - sumY * sumX2 / n + sumY3 - sumY * sumY2 / n);
+
+    const det = A11 * A22 - A12 * A12;
+    if (Math.abs(det) < 1e-14) return null;
+
+    const cx = (A22 * b1 - A12 * b2) / det;
+    const cy = (A11 * b2 - A12 * b1) / det;
+
+    // Radius
+    let sumR = 0;
+    for (const p of points) {
+      sumR += Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2);
     }
-    
-    const confidence = bestInliers / points.length;
-    
-    return {
-      center: bestCenter,
-      radius: bestRadius,
-      confidence
-    };
+    const r = sumR / n;
+
+    // Fitness: noktaların çembere ne kadar yakın olduğu (0-1)
+    let totalResidual = 0;
+    for (const p of points) {
+      const d = Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2);
+      totalResidual += Math.abs(d - r);
+    }
+    const avgResidual = totalResidual / n;
+    const fitness = Math.max(0, 1 - avgResidual / (r || 0.01));
+
+    return { x: cx, y: cy, r, fitness };
   }
-  
-  /**
-   * Fit circle through 3 points
-   */
-  private circleFrom3Points(
-    p1: { x: number; y: number },
-    p2: { x: number; y: number },
-    p3: { x: number; y: number }
-  ): { x: number; y: number; r: number } | null {
-    const d = 2 * (p1.x * (p2.y - p3.y) + p2.x * (p3.y - p1.y) + p3.x * (p1.y - p2.y));
-    if (Math.abs(d) < 1e-10) return null;
-    
-    const ux = ((p1.x * p1.x + p1.y * p1.y) * (p2.y - p3.y) +
-                (p2.x * p2.x + p2.y * p2.y) * (p3.y - p1.y) +
-                (p3.x * p3.x + p3.y * p3.y) * (p1.y - p2.y)) / d;
-                
-    const uy = ((p1.x * p1.x + p1.y * p1.y) * (p3.x - p2.x) +
-                (p2.x * p2.x + p2.y * p2.y) * (p1.x - p3.x) +
-                (p3.x * p3.x + p3.y * p3.y) * (p2.x - p1.x)) / d;
-                
-    const r = Math.sqrt((p1.x - ux) ** 2 + (p1.y - uy) ** 2);
-    
-    return { x: ux, y: uy, r };
-  }
-  
-  /**
-   * Estimate iris radius using multiple methods
-   */
+
   private estimateIrisRadius(
     irisPoints: Array<{ x: number; y: number }>,
     center: { x: number; y: number },
     eyeWidth: number
   ): number {
-    // Method 1: Average distance from center
     const avgDist = irisPoints.reduce((sum, p) => {
       return sum + Math.sqrt((p.x - center.x) ** 2 + (p.y - center.y) ** 2);
     }, 0) / irisPoints.length;
-    
-    // Method 2: Eye width ratio
+
     const ratioRadius = eyeWidth * this.IRIS_RADIUS_RATIO;
-    
-    // Method 3: Bounding box
     const bounds = this.computeBoundingBox(irisPoints);
     const bboxRadius = Math.max(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY) / 2;
-    
-    // Weighted combination
+
     let radius = avgDist * 0.5 + ratioRadius * 0.3 + bboxRadius * 0.2;
-    
-    // Clamp to reasonable bounds
     radius = Math.max(this.MIN_IRIS_RADIUS, Math.min(this.MAX_IRIS_RADIUS, radius));
-    
     return radius;
   }
-  
+
   /**
-   * Temporal smoothing using exponential moving average
+   * Temporal smoothing — daha yavaş decay ile kararlı çıktı.
+   * decay=0.3: son frame ağırlığı ~0.74, 5 frame öncesi ~0.22, 10 frame öncesi ~0.05
    */
   private temporalSmoothing(
     current: IrisFeatures,
@@ -201,30 +201,30 @@ export class AdvancedIrisDetector {
   ): IrisFeatures {
     const history = this.irisHistory.get(eyeType)!;
     history.push(current);
-    
+
     if (history.length > this.HISTORY_SIZE) {
       history.shift();
     }
-    
+
     if (history.length < 3) {
       return current;
     }
-    
-    // Weighted average (recent frames have more weight)
+
     let totalWeight = 0;
     let weightedCenter = { x: 0, y: 0 };
     let weightedRadius = 0;
     let weightedConfidence = 0;
-    
+
+    // Decay=0.3 (önceki 0.5'ten düşük → daha yavaş unutma → daha kararlı)
     history.forEach((features, i) => {
-      const weight = Math.exp(0.5 * (i - history.length + 1));
+      const weight = Math.exp(0.3 * (i - history.length + 1));
       weightedCenter.x += features.center.x * weight;
       weightedCenter.y += features.center.y * weight;
       weightedRadius += features.radius * weight;
       weightedConfidence += features.confidence * weight;
       totalWeight += weight;
     });
-    
+
     return {
       center: {
         x: weightedCenter.x / totalWeight,
@@ -234,15 +234,10 @@ export class AdvancedIrisDetector {
       confidence: weightedConfidence / totalWeight
     };
   }
-  
-  /**
-   * Fit ellipse to iris points for perspective compensation
-   */
+
   private fitEllipse(points: Array<{ x: number; y: number }>): IrisFeatures['ellipse'] {
-    // Simplified ellipse fitting using moments
     const center = this.computeCentroid(points);
-    
-    // Compute covariance matrix
+
     let cxx = 0, cyy = 0, cxy = 0;
     points.forEach(p => {
       const dx = p.x - center.x;
@@ -251,46 +246,44 @@ export class AdvancedIrisDetector {
       cyy += dy * dy;
       cxy += dx * dy;
     });
-    
+
     cxx /= points.length;
     cyy /= points.length;
     cxy /= points.length;
-    
-    // Eigenvalues and eigenvectors
+
     const trace = cxx + cyy;
     const det = cxx * cyy - cxy * cxy;
-    const lambda1 = trace / 2 + Math.sqrt((trace * trace / 4) - det);
-    const lambda2 = trace / 2 - Math.sqrt((trace * trace / 4) - det);
-    
-    // Rotation angle
+    const disc = Math.max(0, trace * trace / 4 - det);
+    const lambda1 = trace / 2 + Math.sqrt(disc);
+    const lambda2 = trace / 2 - Math.sqrt(disc);
+
     const rotation = Math.atan2(2 * cxy, cxx - cyy) / 2;
-    
+
     return {
       centerX: center.x,
       centerY: center.y,
-      radiusX: 2 * Math.sqrt(lambda1),
-      radiusY: 2 * Math.sqrt(lambda2),
+      radiusX: 2 * Math.sqrt(Math.max(0, lambda1)),
+      radiusY: 2 * Math.sqrt(Math.max(0, lambda2)),
       rotation
     };
   }
-  
-  // Utility functions
+
   private computeCentroid(points: Array<{ x: number; y: number }>): { x: number; y: number } {
     const sum = points.reduce((acc, p) => ({
       x: acc.x + p.x,
       y: acc.y + p.y
     }), { x: 0, y: 0 });
-    
+
     return {
       x: sum.x / points.length,
       y: sum.y / points.length
     };
   }
-  
+
   private computeBoundingBox(points: Array<{ x: number; y: number }>) {
     const xs = points.map(p => p.x);
     const ys = points.map(p => p.y);
-    
+
     return {
       minX: Math.min(...xs),
       maxX: Math.max(...xs),
@@ -298,25 +291,12 @@ export class AdvancedIrisDetector {
       maxY: Math.max(...ys)
     };
   }
-  
-  private randomSample(n: number, k: number): number[] {
-    const indices: number[] = [];
-    const used = new Set<number>();
-    
-    while (indices.length < k) {
-      const i = Math.floor(Math.random() * n);
-      if (!used.has(i)) {
-        indices.push(i);
-        used.add(i);
-      }
-    }
-    
-    return indices;
-  }
-  
+
   reset(): void {
     this.irisHistory.clear();
     this.irisHistory.set('left', []);
     this.irisHistory.set('right', []);
+    this.lastStable.set('left', null);
+    this.lastStable.set('right', null);
   }
 }

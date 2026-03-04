@@ -117,7 +117,7 @@ export class FaceTracker {
     leftX: number[], leftY: number[],
     rightX: number[], rightY: number[]
   } = { leftX: [], leftY: [], rightX: [], rightY: [] };
-  private readonly IRIS_HISTORY_SIZE = 5; // 5-frame median: daha iyi gürültü bastırma
+  private readonly IRIS_HISTORY_SIZE = 7; // 7-frame median: güçlü gürültü bastırma (iris titreşimini önler)
 
   // Advanced iris detector (RANSAC + temporal smoothing + ellipse fitting)
   private advancedIrisDetector: AdvancedIrisDetector;
