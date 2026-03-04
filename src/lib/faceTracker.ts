@@ -113,14 +113,14 @@ export class FaceTracker {
   private irisOffsetRight: { x: number; y: number } = { x: 0, y: 0 };
   
   // İris pozisyon geçmişi (stabilizasyon için)
-  private irisHistory: { 
-    leftX: number[], leftY: number[], 
-    rightX: number[], rightY: number[] 
+  private irisHistory: {
+    leftX: number[], leftY: number[],
+    rightX: number[], rightY: number[]
   } = { leftX: [], leftY: [], rightX: [], rightY: [] };
-  private readonly IRIS_HISTORY_SIZE = 3; // 5 -> 3 (daha az memory, hızlı median)
-  
-  // Advanced iris detector
-  private advancedIrisDetector: AdvancedIrisDetector | null = null;
+  private readonly IRIS_HISTORY_SIZE = 5; // 5-frame median: daha iyi gürültü bastırma
+
+  // Advanced iris detector (RANSAC + temporal smoothing + ellipse fitting)
+  private advancedIrisDetector: AdvancedIrisDetector;
   private useAdvancedIris: boolean = true;
 
   constructor() {
@@ -546,16 +546,49 @@ export class FaceTracker {
   }
 
   private extractFeatures(landmarks: FaceLandmark[]): EyeFeatures {
-    // Ham iris merkezi: 5 iris landmark'ının centroid'i
-    const leftIrisRaw = this.getIrisCenter(landmarks, LEFT_EYE_INDICES);
-    const rightIrisRaw = this.getIrisCenter(landmarks, RIGHT_EYE_INDICES);
-    
-    // İris pozisyon geçmişi güncelle
-    this.irisHistory.leftX.push(leftIrisRaw.x);
-    this.irisHistory.leftY.push(leftIrisRaw.y);
-    this.irisHistory.rightX.push(rightIrisRaw.x);
-    this.irisHistory.rightY.push(rightIrisRaw.y);
-    
+    // Advanced iris detection: RANSAC circle fitting + temporal smoothing
+    let leftIrisStable: { x: number; y: number };
+    let rightIrisStable: { x: number; y: number };
+
+    if (this.useAdvancedIris && this.advancedIrisDetector) {
+      // Göz kontur landmark'larını hazırla
+      const leftEyeLandmarks = [...LEFT_EYE_INDICES.upper, ...LEFT_EYE_INDICES.lower]
+        .filter(i => i < landmarks.length)
+        .map(i => ({ x: landmarks[i].x, y: landmarks[i].y }));
+      const leftIrisLandmarks = LEFT_EYE_INDICES.iris
+        .filter(i => i < landmarks.length)
+        .map(i => ({ x: landmarks[i].x, y: landmarks[i].y }));
+      const rightEyeLandmarks = [...RIGHT_EYE_INDICES.upper, ...RIGHT_EYE_INDICES.lower]
+        .filter(i => i < landmarks.length)
+        .map(i => ({ x: landmarks[i].x, y: landmarks[i].y }));
+      const rightIrisLandmarks = RIGHT_EYE_INDICES.iris
+        .filter(i => i < landmarks.length)
+        .map(i => ({ x: landmarks[i].x, y: landmarks[i].y }));
+
+      if (leftIrisLandmarks.length >= 3 && rightIrisLandmarks.length >= 3) {
+        const leftResult = this.advancedIrisDetector.detectIris(leftEyeLandmarks, leftIrisLandmarks, 'left');
+        const rightResult = this.advancedIrisDetector.detectIris(rightEyeLandmarks, rightIrisLandmarks, 'right');
+        leftIrisStable = leftResult.center;
+        rightIrisStable = rightResult.center;
+      } else {
+        // Yetersiz landmark → temel yönteme düş
+        leftIrisStable = this.getIrisCenter(landmarks, LEFT_EYE_INDICES);
+        rightIrisStable = this.getIrisCenter(landmarks, RIGHT_EYE_INDICES);
+      }
+    } else {
+      // Temel yöntem: centroid + median filtre
+      const leftIrisRaw = this.getIrisCenter(landmarks, LEFT_EYE_INDICES);
+      const rightIrisRaw = this.getIrisCenter(landmarks, RIGHT_EYE_INDICES);
+      leftIrisStable = leftIrisRaw;
+      rightIrisStable = rightIrisRaw;
+    }
+
+    // İris pozisyon geçmişi güncelle (ek median filtre — advanced üstüne bile faydalı)
+    this.irisHistory.leftX.push(leftIrisStable.x);
+    this.irisHistory.leftY.push(leftIrisStable.y);
+    this.irisHistory.rightX.push(rightIrisStable.x);
+    this.irisHistory.rightY.push(rightIrisStable.y);
+
     // Geçmiş boyutunu sınırla
     if (this.irisHistory.leftX.length > this.IRIS_HISTORY_SIZE) {
       this.irisHistory.leftX.shift();
@@ -563,23 +596,18 @@ export class FaceTracker {
       this.irisHistory.rightX.shift();
       this.irisHistory.rightY.shift();
     }
-    
-    // Median filtre ile stabilize et (outlier'lara karşı dayanıklı)
+
+    // 5-frame median filtre: RANSAC çıktısını bile stabilize eder
     const getMedian = (arr: number[]) => {
       const sorted = [...arr].sort((a, b) => a - b);
       const mid = Math.floor(sorted.length / 2);
       return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
     };
-    
-    const leftIrisStable = this.irisHistory.leftX.length >= 3 ? {
-      x: getMedian(this.irisHistory.leftX),
-      y: getMedian(this.irisHistory.leftY)
-    } : leftIrisRaw;
-    
-    const rightIrisStable = this.irisHistory.rightX.length >= 3 ? {
-      x: getMedian(this.irisHistory.rightX),
-      y: getMedian(this.irisHistory.rightY)
-    } : rightIrisRaw;
+
+    if (this.irisHistory.leftX.length >= 3) {
+      leftIrisStable = { x: getMedian(this.irisHistory.leftX), y: getMedian(this.irisHistory.leftY) };
+      rightIrisStable = { x: getMedian(this.irisHistory.rightX), y: getMedian(this.irisHistory.rightY) };
+    }
 
     // Kullanıcı manuel offset (kalibrasyon öncesi hizalama)
     const leftIris = { x: leftIrisStable.x + this.irisOffsetLeft.x, y: leftIrisStable.y + this.irisOffsetLeft.y };

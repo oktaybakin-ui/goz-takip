@@ -78,7 +78,7 @@ export default function Calibration({
     setSampleProgress(0);
     samplingRef.current = false;
 
-    let count = 2;  // 2 saniye geri sayım — kullanıcı noktayı bulup odaklansın
+    let count = 3;  // 3 saniye geri sayım — kullanıcı noktayı bulup odaklansın (2'den artırıldı)
     setCountdown(count);
 
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -103,7 +103,7 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = 8000;  // 12s → 8s
+    const POINT_TIMEOUT_MS = 10000;  // 55 örnek/nokta için yeterli süre
 
     const advanceToNext = async () => {
       samplingRef.current = false;
@@ -513,7 +513,7 @@ export default function Calibration({
             <p className="text-gray-500 text-xs">
               {state.phase === "calibrating"
                 ? `Nokta ${state.currentPointIndex + 1} / ${state.totalPoints}`
-                : `Doğrulama ${state.currentPointIndex + 1} / 5`}
+                : `Doğrulama ${state.currentPointIndex + 1} / 9`}
             </p>
 
             {/* Uyarı */}

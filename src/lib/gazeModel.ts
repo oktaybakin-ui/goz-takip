@@ -260,10 +260,11 @@ export class OneEuroFilter {
   // Hareket hızına göre parametreleri dinamik ayarla
   setDynamicParams(velocity: number): void {
     // Hız arttıkça minCutoff artır (daha az smoothing)
-    // Sabitken (velocity < 50px/s) daha fazla smoothing
-    const speedFactor = Math.min(velocity / 500, 1.0);
-    this.minCutoff = 1.0 + speedFactor * 3.0; // 1.0 - 4.0 arası
-    this.beta = 0.007 + speedFactor * 0.05; // 0.007 - 0.057 arası
+    // Sabitken (velocity < 50px/s) daha fazla smoothing → jitter azalır
+    // Hızlıyken → gecikme azalır (saccade takibi)
+    const speedFactor = Math.min(velocity / 400, 1.0);
+    this.minCutoff = 0.8 + speedFactor * 3.5; // 0.8 - 4.3 arası (fixation: 0.8 → çok güçlü smoothing)
+    this.beta = 0.005 + speedFactor * 0.06; // 0.005 - 0.065 arası
   }
 
   private alpha(cutoff: number, dt: number): number {
@@ -344,13 +345,13 @@ export class GazeModel {
     this.lambda = lambda;
     this.useKalmanFilter = useKalman;
     if (useKalman) {
-      this.kalmanFilter = new KalmanFilter2D(0.1, 5.0);
+      this.kalmanFilter = new KalmanFilter2D(0.08, 8.0);
     }
-    // Tek filtre katmanı (landmark filtreleri kaldırıldı)
-    // Daha yüksek minCutoff: hızlı saccade'lere daha duyarlı
-    // Daha yüksek beta: hız artınca cutoff hızla yükselir → gecikme azalır
-    this.filterX = new OneEuroFilter(2.0, 0.07, 1.0);
-    this.filterY = new OneEuroFilter(1.7, 0.06, 1.0);
+    // One Euro Filter: fixation sırasında güçlü smoothing, saccade sırasında düşük gecikme
+    // Düşük minCutoff = güçlü smoothing (fixation sırasında jitter azaltır)
+    // Yüksek beta = hız artınca cutoff hızla yükselir → saccade gecikmesi azalır
+    this.filterX = new OneEuroFilter(1.2, 0.09, 1.0);
+    this.filterY = new OneEuroFilter(1.0, 0.08, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -706,7 +707,7 @@ export class GazeModel {
     }
     
     // Confidence çok düşükse atla
-    if (features.confidence < 0.3) {
+    if (features.confidence < 0.15) {
       return null;
     }
     
@@ -803,10 +804,10 @@ export class GazeModel {
     let finalY = filteredY;
     
     if (this.useKalmanFilter && this.kalmanFilter) {
-      const kalmanResult = this.kalmanFilter.filter(filteredX, filteredY, now);
+      const kalmanResult = this.kalmanFilter.filter(filteredX, filteredY, now, features.confidence);
       finalX = kalmanResult.x;
       finalY = kalmanResult.y;
-      
+
       // Update One Euro filter parameters based on Kalman velocity
       const kalmanVelocity = Math.sqrt(kalmanResult.vx ** 2 + kalmanResult.vy ** 2);
       this.filterX.setDynamicParams(kalmanVelocity);

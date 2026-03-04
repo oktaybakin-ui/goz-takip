@@ -283,12 +283,12 @@ export class MultiModelEnsemble {
   private hashFeatures(features: any): string {
     // Simple hash based on key feature values
     const vals = [
-      features.leftPupil.x.toFixed(3),
-      features.leftPupil.y.toFixed(3),
-      features.rightPupil.x.toFixed(3),
-      features.rightPupil.y.toFixed(3),
-      features.leftIris.x.toFixed(3),
-      features.leftIris.y.toFixed(3)
+      features.leftIrisX.toFixed(3),
+      features.leftIrisY.toFixed(3),
+      features.rightIrisX.toFixed(3),
+      features.rightIrisY.toFixed(3),
+      features.leftIrisRelX.toFixed(3),
+      features.leftIrisRelY.toFixed(3)
     ];
     return vals.join('|');
   }

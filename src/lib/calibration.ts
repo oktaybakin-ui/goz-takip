@@ -57,8 +57,8 @@ export function generateCalibrationPoints(
 ): CalibrationPoint[] {
   const points: CalibrationPoint[] = [];
   let id = 0;
-  const cols = 5;  // 25 nokta yeterli (5x5)
-  const rows = 5;  // Daha hızlı kalibrasyon
+  const cols = 4;  // 16 nokta (4x4) — daha az ama nokta başına daha fazla örnek
+  const rows = 4;
   for (let row = 0; row < rows; row++) {
     const isEvenRow = row % 2 === 0;
     for (let ci = 0; ci < cols; ci++) {
@@ -84,10 +84,14 @@ export function generateValidationPoints(
 ): CalibrationPoint[] {
   const positions = [
     { relX: 0.5, relY: 0.5 },   // merkez
-    { relX: 0.15, relY: 0.15 }, // sol üst
-    { relX: 0.85, relY: 0.15 }, // sağ üst
-    { relX: 0.15, relY: 0.85 }, // sol alt
-    { relX: 0.85, relY: 0.85 }, // sağ alt
+    { relX: 0.15, relY: 0.15 }, // sol üst köşe
+    { relX: 0.85, relY: 0.15 }, // sağ üst köşe
+    { relX: 0.15, relY: 0.85 }, // sol alt köşe
+    { relX: 0.85, relY: 0.85 }, // sağ alt köşe
+    { relX: 0.5, relY: 0.15 },  // üst orta
+    { relX: 0.5, relY: 0.85 },  // alt orta
+    { relX: 0.15, relY: 0.5 },  // sol orta
+    { relX: 0.85, relY: 0.5 },  // sağ orta
   ];
 
   return positions.map((pos, i) => ({
@@ -176,11 +180,11 @@ export class CalibrationManager {
   private currentPointFrameCount: number = 0;
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
-  private readonly IRIS_BUFFER_SIZE = 10;  // 15'ten 10'a
-  private readonly IRIS_STD_MAX = 0.035;   // 0.025'ten 0.035'e (daha toleranslı)
-  private readonly MIN_SAMPLES_PER_POINT = 30; // Daha hızlı kalibrasyon
+  private readonly IRIS_BUFFER_SIZE = 8;   // Kompakt ama yeterli
+  private readonly IRIS_STD_MAX = 0.028;   // Daha sıkı: sadece gerçekten sabit bakışta veri al
+  private readonly MIN_SAMPLES_PER_POINT = 55; // 16 nokta × 55 örnek ≈ 880 toplam (25×40=1000'e yakın)
   private readonly MIN_CONFIDENCE_CALIBRATION = 0.45; // 0.40'tan 0.45'e
-  private readonly RETRY_QUALITY_THRESHOLD = 25; // 20'den 25'e (daha sıkı kalite)
+  private readonly RETRY_QUALITY_THRESHOLD = 30; // 55 örnek hedefinde 30 altı → retry
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();
@@ -198,7 +202,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: 25,  // 5x5 grid
+      totalPoints: 16,  // 4x4 grid
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,
@@ -251,7 +255,7 @@ export class CalibrationManager {
   /** FPS bilgisini güncelle (kamera FPS'i) */
   setFPS(fps: number): void {
     this.detectedFPS = Math.max(15, Math.min(120, fps));
-    this.settleFrames = Math.round(this.detectedFPS * 1.5);
+    this.settleFrames = Math.round(this.detectedFPS * 2.0); // 1.5→2.0: göz tam sabitlenene kadar bekle
     logger.log("[Calibration] FPS:", this.detectedFPS, "| Settle frames:", this.settleFrames);
   }
 
@@ -261,7 +265,7 @@ export class CalibrationManager {
     this.retryQueue = [];
     this.retryAttempts.clear();
     if (this.settleFrames === 0) {
-      this.settleFrames = Math.round(this.detectedFPS * 1.5);
+      this.settleFrames = Math.round(this.detectedFPS * 2.0);
     }
     this.updateState({
       phase: "calibrating",

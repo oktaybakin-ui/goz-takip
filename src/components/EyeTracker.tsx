@@ -566,13 +566,21 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
       // Model tahminini al (ensemble veya single)
       let screenPoint: GazePoint | null = null;
-      
-      if (useEnsemble.current && ensembleRef.current) {
-        screenPoint = ensembleRef.current.predict(features) as GazePoint;
-      } else {
+
+      try {
+        if (useEnsemble.current && ensembleRef.current) {
+          screenPoint = ensembleRef.current.predict(features) as GazePoint;
+        }
+      } catch (e) {
+        // Ensemble başarısız olursa single model'e düş
+        if (shouldLog) logger.warn("[Tracking] Ensemble predict hatası, single model kullanılıyor:", e);
+        useEnsemble.current = false;
+      }
+
+      if (!screenPoint) {
         screenPoint = modelRef.current.predict(features);
       }
-      
+
       if (!screenPoint) {
         if (shouldLog) logger.log("[Tracking] Model predict null döndü (outlier?)");
         return;

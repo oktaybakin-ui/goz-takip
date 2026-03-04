@@ -23,6 +23,9 @@ export class KalmanFilter2D {
     [25, 0],
     [0, 25]
   ];
+
+  // Base measurement noise (adaptif R için)
+  private baseR: number = 8.0;
   
   // State transition matrix
   private F: number[][] = [
@@ -41,16 +44,18 @@ export class KalmanFilter2D {
   private lastTime: number | null = null;
   private initialized: boolean = false;
   
-  constructor(processNoise: number = 0.1, measurementNoise: number = 5.0) {
+  constructor(processNoise: number = 0.08, measurementNoise: number = 8.0) {
     // Process noise (how much we expect velocity to change)
+    // Düşük processNoise = daha az ani hız değişimi beklentisi → pürüzsüz
     this.Q = [
       [processNoise, 0, 0, 0],
       [0, processNoise, 0, 0],
-      [0, 0, processNoise * 10, 0],
-      [0, 0, 0, processNoise * 10]
+      [0, 0, processNoise * 8, 0],
+      [0, 0, 0, processNoise * 8]
     ];
-    
-    // Measurement noise
+
+    // Measurement noise — göz takibi gürültülü, R yüksek tutulur → fazla ölçüme güvenme
+    this.baseR = measurementNoise;
     this.R = [
       [measurementNoise, 0],
       [0, measurementNoise]
@@ -115,25 +120,36 @@ export class KalmanFilter2D {
   }
   
   /**
-   * Process a new measurement and return filtered position
+   * Process a new measurement and return filtered position.
+   * @param confidence - opsiyonel güven skoru (0-1): düşükse ölçüm gürültüsü artırılır
    */
-  filter(x: number, y: number, timestamp: number): { x: number; y: number; vx: number; vy: number } {
+  filter(x: number, y: number, timestamp: number, confidence?: number): { x: number; y: number; vx: number; vy: number } {
     if (!this.initialized) {
       this.x = [x, y, 0, 0];
       this.lastTime = timestamp;
       this.initialized = true;
       return { x, y, vx: 0, vy: 0 };
     }
-    
+
     const dt = (timestamp - (this.lastTime || timestamp)) / 1000; // seconds
     this.lastTime = timestamp;
-    
+
     if (dt > 0) {
       this.predict(dt);
     }
-    
+
+    // Adaptif ölçüm gürültüsü: düşük confidence → daha çok tahmine güven, ölçümü azalt
+    if (confidence !== undefined && confidence < 0.8) {
+      const noiseFactor = 1 + (1 - confidence) * 4; // confidence 0.3 → 3.8x noise
+      this.R[0][0] = this.baseR * noiseFactor;
+      this.R[1][1] = this.baseR * noiseFactor;
+    } else {
+      this.R[0][0] = this.baseR;
+      this.R[1][1] = this.baseR;
+    }
+
     this.update([x, y]);
-    
+
     return {
       x: this.x[0],
       y: this.x[1],
