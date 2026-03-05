@@ -166,14 +166,16 @@ export default function GazeReplay({ gazePoints, fixations, width, height, image
 
   return (
     <div className="space-y-3">
-      <div className="relative rounded-lg overflow-hidden bg-black" style={{ width, height }}>
+      <div
+        className="relative rounded-lg overflow-hidden bg-black w-full"
+        style={{ maxWidth: width, aspectRatio: `${width} / ${height}` }}
+      >
         <NextImage src={imageUrl} alt="" fill unoptimized className="absolute inset-0 w-full h-full object-contain" />
         <canvas
           ref={canvasRef}
           width={width}
           height={height}
-          className="absolute inset-0 z-10"
-          style={{ width, height }}
+          className="absolute inset-0 w-full h-full z-10"
         />
       </div>
 

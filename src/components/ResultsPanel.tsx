@@ -323,17 +323,20 @@ export default function ResultsPanel({
           {/* Diğer sekmeler: görsel + overlay */}
           {activeTab !== "replay" && (
             <div
-              className="relative rounded-xl overflow-hidden border border-gray-800 bg-black"
-              style={{ width: imageDimensions.width, height: imageDimensions.height, maxWidth: "100%" }}
+              className="relative rounded-xl overflow-hidden border border-gray-800 bg-black w-full"
+              style={{
+                maxWidth: imageDimensions.width,
+                aspectRatio: `${imageDimensions.width} / ${imageDimensions.height}`,
+              }}
             >
               <NextImage src={imageUrl} alt="Analiz" fill unoptimized className="absolute inset-0 w-full h-full object-contain" />
 
               {activeTab === "fixations" && (
-                <canvas ref={canvasRef} className="absolute inset-0 z-10" style={{ width: imageDimensions.width, height: imageDimensions.height }} />
+                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-10" />
               )}
 
               {activeTab === "clusters" && (
-                <canvas ref={clusterCanvasRef} className="absolute inset-0 z-10" style={{ width: imageDimensions.width, height: imageDimensions.height }} />
+                <canvas ref={clusterCanvasRef} className="absolute inset-0 w-full h-full z-10" />
               )}
 
               {activeTab === "heatmap" && (
