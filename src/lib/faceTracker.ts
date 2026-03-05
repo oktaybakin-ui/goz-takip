@@ -607,32 +607,41 @@ export class FaceTracker {
 
     // Sürekli çok faktörlü güven skoru
     let confidence = 1.0;
+    const mobile = isMobileDevice();
 
     // Göz açıklığı faktörü (EAR): tamamen kapalı=0, normal açık=1
-    if (eyeOpenness < 0.15) {
-      confidence *= Math.max(0, eyeOpenness / 0.15);
+    // Mobilde kamera açısı ve çözünürlük nedeniyle EAR değerleri daha düşük algılanıyor
+    const eyeOpennessThresh = mobile ? 0.08 : 0.15;
+    if (eyeOpenness < eyeOpennessThresh) {
+      confidence *= Math.max(0, eyeOpenness / eyeOpennessThresh);
     }
 
     // Yüz boyutu faktörü: çok küçük yüz = düşük güven
-    if (faceScale < 0.08) {
-      confidence *= Math.max(0.1, faceScale / 0.08);
+    // Mobilde telefon daha yakın tutulduğu için yüz genelde büyük, ama bazı cihazlarda küçük olabilir
+    const minFaceScale = mobile ? 0.04 : 0.08;
+    if (faceScale < minFaceScale) {
+      confidence *= Math.max(0.1, faceScale / minFaceScale);
     }
 
     // İris tespit edilemedi
     if (leftIris.x === 0 && leftIris.y === 0) confidence = 0;
 
-    // İris göreceli pozisyon aşırı uç ise güven düşür
-    const irisRange = (v: number) => v < -0.3 ? Math.max(0.2, 1 + (v + 0.3) * 2) :
-                                      v > 1.3 ? Math.max(0.2, 1 - (v - 1.3) * 2) : 1;
+    // İris göreceli pozisyon aşırı uç ise güven düşür — mobilde daha toleranslı
+    const irisLo = mobile ? -0.5 : -0.3;
+    const irisHi = mobile ? 1.5 : 1.3;
+    const irisRange = (v: number) => v < irisLo ? Math.max(0.2, 1 + (v - irisLo) * 2) :
+                                      v > irisHi ? Math.max(0.2, 1 - (v - irisHi) * 2) : 1;
     confidence *= Math.min(irisRange(leftRel.x), irisRange(rightRel.x));
     confidence *= Math.min(irisRange(leftRel.y), irisRange(rightRel.y));
 
-    // Sol-sağ iris tutarsızlığı: baş yana dönükse tolerans artır
+    // Sol-sağ iris tutarsızlığı: baş yana dönükse tolerans artır — mobilde daha toleranslı
     const irisAsymX = Math.abs(leftRel.x - rightRel.x);
     const irisAsymY = Math.abs(leftRel.y - rightRel.y);
     const asymTolerance = Math.min(Math.abs(headPose.yaw) * 1.5, 0.25);
-    const asymThreshX = 0.3 + asymTolerance;
-    const asymThreshY = 0.3 + asymTolerance * 0.5;
+    const asymBaseX = mobile ? 0.45 : 0.3;
+    const asymBaseY = mobile ? 0.45 : 0.3;
+    const asymThreshX = asymBaseX + asymTolerance;
+    const asymThreshY = asymBaseY + asymTolerance * 0.5;
     if (irisAsymX > asymThreshX) confidence *= Math.max(0.3, 1 - (irisAsymX - asymThreshX) * 2);
     if (irisAsymY > asymThreshY) confidence *= Math.max(0.3, 1 - (irisAsymY - asymThreshY) * 2);
 

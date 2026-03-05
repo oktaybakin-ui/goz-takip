@@ -9,6 +9,7 @@ import { HeatmapGenerator } from "@/lib/heatmap";
 import { MultiModelEnsemble } from "@/lib/multiModelEnsemble";
 import { AutoRecalibration } from "@/lib/autoRecalibration";
 import { BlinkDetector } from "@/lib/blinkDetector";
+import { isMobileDevice } from "@/lib/deviceDetect";
 import { logger } from "@/lib/logger";
 import { useLang } from "@/contexts/LangContext";
 import Calibration from "./Calibration";
@@ -151,7 +152,12 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
   if (!fixationDetectorRef.current) fixationDetectorRef.current = new FixationDetector();
   const blinkDetectorRef = useRef<BlinkDetector>(null as unknown as BlinkDetector);
-  if (!blinkDetectorRef.current) blinkDetectorRef.current = new BlinkDetector();
+  // Mobilde EAR değerleri daha düşük → blink threshold'u düşür, consecutive frame'i artır
+  if (!blinkDetectorRef.current) blinkDetectorRef.current = new BlinkDetector(
+    isMobileDevice() ? 0.14 : 0.20,  // Mobilde gözler daha küçük görünüyor
+    isMobileDevice() ? 4 : 3,         // Mobilde daha fazla frame gerekli (false positive azalt)
+    isMobileDevice() ? 1 : 2          // Mobilde daha kısa post-blink rejection
+  );
   const heatmapRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
   if (!heatmapRef.current) heatmapRef.current = new HeatmapGenerator();
   const trackingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -343,7 +349,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     gazePointsRef.current = [];
     fixationDetectorRef.current = new FixationDetector();
     fixationDetectorRef.current.startTracking();
-    blinkDetectorRef.current = new BlinkDetector();
+    blinkDetectorRef.current = new BlinkDetector(
+      isMobileDevice() ? 0.14 : 0.20,
+      isMobileDevice() ? 4 : 3,
+      isMobileDevice() ? 1 : 2
+    );
     blinkDetectorRef.current.start();
 
     transitionPhotoNumRef.current = idx + 1;
@@ -505,7 +515,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
     fixationDetectorRef.current = new FixationDetector();
     fixationDetectorRef.current.startTracking();
-    blinkDetectorRef.current = new BlinkDetector();
+    blinkDetectorRef.current = new BlinkDetector(
+      isMobileDevice() ? 0.14 : 0.20,
+      isMobileDevice() ? 4 : 3,
+      isMobileDevice() ? 1 : 2
+    );
     blinkDetectorRef.current.start();
 
     if (trackingTimerRef.current) clearInterval(trackingTimerRef.current);
@@ -542,6 +556,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
     let debugCounter = 0;
     const debugInterval = 300; // Her 300 frame'de bir log (daha az console spam)
+    const mobile = isMobileDevice();
 
     faceTrackerRef.current.startTracking((features: EyeFeatures) => {
       debugCounter++;
@@ -555,18 +570,22 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         return;
       }
 
-      // Adaptive frame throttling
+      // Adaptive frame throttling — mobilde daha toleranslı (kamera/GPU yavaş)
       const featureTimestamp = performance.now();
       const frameTime = featureTimestamp - lastFeatureTimestampRef.current;
-      
-      // Skip frames if processing is slow (daha toleranslı: 25fps veya 30fps)
-      const targetFrameTime = processingTimeRef.current > 15 ? 40 : 33;
+
+      const targetFrameTime = mobile
+        ? (processingTimeRef.current > 25 ? 66 : 50) // Mobil: 15-20fps yeterli
+        : (processingTimeRef.current > 15 ? 40 : 33); // Desktop: 25-30fps
       if (frameTime < targetFrameTime) return;
-      
+
       lastFeatureTimestampRef.current = featureTimestamp;
       const processStart = performance.now();
 
-      if (features.confidence < 0.15 || features.eyeOpenness < 0.02) {
+      // Mobilde kamera kalitesi düşük → confidence ve eyeOpenness eşiklerini gevşet
+      const minConfidence = mobile ? 0.05 : 0.15;
+      const minEyeOpenness = mobile ? 0.01 : 0.02;
+      if (features.confidence < minConfidence || features.eyeOpenness < minEyeOpenness) {
         if (shouldLog) logger.log("[Tracking] Düşük confidence/eyeOpenness:", features.confidence.toFixed(2), features.eyeOpenness.toFixed(3));
         return;
       }
@@ -632,15 +651,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
             const diagSize = Math.sqrt(content.contentW ** 2 + content.contentH ** 2);
             const overDist = Math.sqrt(overX ** 2 + overY ** 2);
 
-            // %15'ten fazla dışarıdaysa tamamen reddet (daha toleranslı — kenar bakışlarını kaybetme)
-            if (overDist > diagSize * 0.15) {
+            // Mobilde kalibrasyon hatası yüksek → daha toleranslı sınır
+            const boundaryTolerance = mobile ? 0.35 : 0.15;
+            if (overDist > diagSize * boundaryTolerance) {
               if (shouldLog) logger.log("[Tracking] İçerik dışı nokta reddedildi:", Math.round(overDist), "px dışarıda");
               return;
             }
 
             screenPoint.x = Math.max(left, Math.min(right, px));
             screenPoint.y = Math.max(top, Math.min(bottom, py));
-            const penalty = Math.min(1, overDist / (diagSize * 0.15));
+            const penalty = Math.min(1, overDist / (diagSize * boundaryTolerance));
             screenPoint.confidence *= (1 - penalty * 0.6);
           }
         }

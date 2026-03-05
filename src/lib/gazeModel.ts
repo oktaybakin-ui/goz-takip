@@ -707,8 +707,13 @@ export class GazeModel {
       return null;
     }
     
-    // Confidence çok düşükse atla
-    if (features.confidence < 0.15) {
+    // Confidence çok düşükse atla — mobilde eşik düşük (kamera kalitesi nedeniyle)
+    const isMobile = typeof window !== "undefined" && (
+      /Android|iPhone|iPad|iPod/i.test(navigator?.userAgent ?? "") ||
+      (window.screen.width <= 768 && "ontouchstart" in window)
+    );
+    const minPredictConf = isMobile ? 0.05 : 0.15;
+    if (features.confidence < minPredictConf) {
       return null;
     }
     
@@ -796,7 +801,8 @@ export class GazeModel {
         ? Math.max(window.innerWidth, window.innerHeight)
         : 1920;
       // Gevşek eşik: saccade'ları yemeden sadece aşırı outlier'ları reddet
-      const baseThreshold = screenMax * 0.40;
+      // Mobilde kalibrasyon hatası yüksek → daha toleranslı
+      const baseThreshold = screenMax * (isMobile ? 0.60 : 0.40);
       const velocityBonus = Math.min(avgVelocity * 200, screenMax * 0.35);
       const jumpThreshold = baseThreshold + velocityBonus;
 
