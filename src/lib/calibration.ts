@@ -142,9 +142,9 @@ export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: isMobileDevice() ? 0.18 : 0.10,
-    minConfidence: 0.3,
-    minEyeOpenness: 0.12,
+    headMovement: isMobileDevice() ? 0.25 : 0.10,   // Mobilde el titremesi tolere et
+    minConfidence: isMobileDevice() ? 0.08 : 0.3,    // Mobilde kamera kalitesi düşük
+    minEyeOpenness: isMobileDevice() ? 0.05 : 0.12,  // Mobilde gözler daha küçük görünüyor
   }
 ): StabilityCheck {
   if (features.confidence < thresholds.minConfidence) {
@@ -168,7 +168,8 @@ export function checkStability(
     };
   }
 
-  if (prevFeatures && prevFeatures.confidence > 0.3) {
+  const prevConfThreshold = isMobileDevice() ? 0.08 : 0.3;
+  if (prevFeatures && prevFeatures.confidence > prevConfThreshold) {
     const yawDiff = Math.abs(features.yaw - prevFeatures.yaw);
     const pitchDiff = Math.abs(features.pitch - prevFeatures.pitch);
     const rollDiff = Math.abs(features.roll - prevFeatures.roll);
@@ -209,10 +210,10 @@ export class CalibrationManager {
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
   private readonly IRIS_BUFFER_SIZE = 8;   // Kompakt ama yeterli
-  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.040 : 0.028;
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 40 : 55;
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.060 : 0.028;   // Mobilde iris daha gürültülü
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 25 : 55;        // Mobilde daha az örnek yeterli
   private gridSize: GridSize | undefined = undefined;
-  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.35 : 0.45;
+  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.45; // Mobilde kamera kalitesi düşük
   private readonly RETRY_QUALITY_THRESHOLD = 30; // 55 örnek hedefinde 30 altı → retry
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];

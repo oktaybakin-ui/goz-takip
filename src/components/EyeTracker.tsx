@@ -306,9 +306,30 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   useEffect(() => {
     if ((phase === "calibration" || phase === "tracking") && videoRef.current && faceTrackerRef.current.getStream()) {
       const v = videoRef.current;
-      v.srcObject = faceTrackerRef.current.getStream();
-      v.play().catch(() => {});
-      faceTrackerRef.current.setVideoElement(v);
+      const stream = faceTrackerRef.current.getStream()!;
+      v.srcObject = stream;
+
+      // Mobilde video element yeniden oluşturulduğunda metadata yüklenmesi zaman alır
+      // Video hazır olana kadar bekle, sonra FaceTracker'a bağla
+      const connectWhenReady = () => {
+        if (v.readyState >= 2) {
+          faceTrackerRef.current.setVideoElement(v);
+          logger.log("[EyeTracker] Video reconnected, readyState:", v.readyState,
+            "size:", v.videoWidth, "x", v.videoHeight);
+        } else {
+          v.addEventListener("loadeddata", () => {
+            faceTrackerRef.current.setVideoElement(v);
+            logger.log("[EyeTracker] Video loadeddata, size:", v.videoWidth, "x", v.videoHeight);
+          }, { once: true });
+        }
+      };
+
+      v.play()
+        .then(connectWhenReady)
+        .catch(() => {
+          // Autoplay blocked — try again after user interaction
+          connectWhenReady();
+        });
     }
   }, [phase]);
 
@@ -1165,6 +1186,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
               <span className="text-gray-600 text-xs">
                 {faceTrackerRef.current.getFPS()} FPS
                 {faceTrackerRef.current.getLastFrameUsedZoom() ? " | Zoom" : ""}
+                {" | "}{gazePointsRef.current.length} pt
+                {faceTrackerRef.current.getLastFeatures()?.confidence !== undefined
+                  ? ` | C:${(faceTrackerRef.current.getLastFeatures()!.confidence * 100).toFixed(0)}%`
+                  : ""}
               </span>
               {isMultiImage && (
                 <span aria-live="polite" className="text-blue-300 text-sm font-medium">

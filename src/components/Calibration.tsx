@@ -11,6 +11,7 @@ import { saveCalibration, loadCalibration } from "@/lib/calibrationStorage";
 import { EyeFeatures, GazeModel } from "@/lib/gazeModel";
 import { FaceTracker } from "@/lib/faceTracker";
 import { logger } from "@/lib/logger";
+import { isMobileDevice } from "@/lib/deviceDetect";
 import { useLang } from "@/contexts/LangContext";
 
 interface CalibrationProps {
@@ -103,7 +104,7 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = 10000;
+    const POINT_TIMEOUT_MS = isMobileDevice() ? 15000 : 10000; // Mobilde daha uzun timeout
     // Duplicate detection: rAF ~60fps ama faceTracker ~30fps, aynı features tekrar okunabilir
     let lastFeaturesRef: EyeFeatures | null = null;
 
@@ -243,7 +244,8 @@ export default function Calibration({
       }
 
       const features = faceTracker.getLastFeatures();
-      if (features && features.confidence > 0.35) {
+      const valMinConf = isMobileDevice() ? 0.08 : 0.35;
+      if (features && features.confidence > valMinConf) {
         const result = manager.addValidationSample(features);
         if (result) {
           errors.push(result.error);
