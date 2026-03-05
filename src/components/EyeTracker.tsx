@@ -8,6 +8,7 @@ import { FixationDetector, Fixation, FixationMetrics } from "@/lib/fixation";
 import { HeatmapGenerator } from "@/lib/heatmap";
 import { MultiModelEnsemble } from "@/lib/multiModelEnsemble";
 import { AutoRecalibration } from "@/lib/autoRecalibration";
+import { BlinkDetector } from "@/lib/blinkDetector";
 import { logger } from "@/lib/logger";
 import { useLang } from "@/contexts/LangContext";
 import Calibration from "./Calibration";
@@ -139,7 +140,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   imageNatDimsRef.current = imageNaturalDimensions;
 
   const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
-  if (!modelRef.current) modelRef.current = new GazeModel(0.005, true);  // Kalman filter etkin
+  if (!modelRef.current) modelRef.current = new GazeModel(0.005);
   const ensembleRef = useRef<MultiModelEnsemble>(null as unknown as MultiModelEnsemble);
   if (!ensembleRef.current) ensembleRef.current = new MultiModelEnsemble();
   const autoRecalRef = useRef<AutoRecalibration>(null as unknown as AutoRecalibration);
@@ -149,6 +150,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
   if (!fixationDetectorRef.current) fixationDetectorRef.current = new FixationDetector();
+  const blinkDetectorRef = useRef<BlinkDetector>(null as unknown as BlinkDetector);
+  if (!blinkDetectorRef.current) blinkDetectorRef.current = new BlinkDetector();
   const heatmapRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
   if (!heatmapRef.current) heatmapRef.current = new HeatmapGenerator();
   const trackingTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -340,6 +343,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     gazePointsRef.current = [];
     fixationDetectorRef.current = new FixationDetector();
     fixationDetectorRef.current.startTracking();
+    blinkDetectorRef.current = new BlinkDetector();
+    blinkDetectorRef.current.start();
 
     transitionPhotoNumRef.current = idx + 1;
     setFixations([]);
@@ -500,6 +505,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
     fixationDetectorRef.current = new FixationDetector();
     fixationDetectorRef.current.startTracking();
+    blinkDetectorRef.current = new BlinkDetector();
+    blinkDetectorRef.current.start();
 
     if (trackingTimerRef.current) clearInterval(trackingTimerRef.current);
     trackingTimerRef.current = setInterval(() => {
@@ -561,6 +568,16 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
       if (features.confidence < 0.15 || features.eyeOpenness < 0.02) {
         if (shouldLog) logger.log("[Tracking] Düşük confidence/eyeOpenness:", features.confidence.toFixed(2), features.eyeOpenness.toFixed(3));
+        return;
+      }
+
+      // BlinkDetector ile göz kırpma kontrolü
+      const isBlinking = blinkDetectorRef.current.update(
+        features.leftEAR, features.rightEAR, featureTimestamp
+      );
+      features.isBlinking = isBlinking;
+      if (isBlinking) {
+        if (shouldLog) logger.log("[Tracking] Blink detected, skipping frame");
         return;
       }
 
@@ -1124,6 +1141,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
               </div>
               <span className="text-gray-400 text-sm">
                 {formatTime(trackingDuration)}
+              </span>
+              <span className="text-gray-600 text-xs">
+                {faceTrackerRef.current.getFPS()} FPS
+                {faceTrackerRef.current.getLastFrameUsedZoom() ? " | Zoom" : ""}
               </span>
               {isMultiImage && (
                 <span aria-live="polite" className="text-blue-300 text-sm font-medium">

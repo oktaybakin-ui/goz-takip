@@ -7,14 +7,14 @@ import type { EyeFeatures } from "../gazeModel";
 
 describe("calibration", () => {
   describe("generateCalibrationPoints", () => {
-    it("returns 25 points for 5x5 grid", () => {
+    it("returns 16 points for desktop default (4x4 grid)", () => {
       const points = generateCalibrationPoints(800, 600, 50);
-      expect(points).toHaveLength(25);
+      expect(points).toHaveLength(16);
       const ids = new Set<number>();
       points.forEach((p) => {
         expect(p).toHaveProperty("id");
         expect(p.id).toBeGreaterThanOrEqual(0);
-        expect(p.id).toBeLessThan(25);
+        expect(p.id).toBeLessThan(16);
         ids.add(p.id);
         expect(p).toHaveProperty("x");
         expect(p).toHaveProperty("y");
@@ -23,7 +23,17 @@ describe("calibration", () => {
         expect(typeof p.x).toBe("number");
         expect(typeof p.y).toBe("number");
       });
-      expect(ids.size).toBe(25);
+      expect(ids.size).toBe(16);
+    });
+
+    it("returns 25 points when gridSize is 5x5", () => {
+      const points = generateCalibrationPoints(800, 600, 50, "5x5");
+      expect(points).toHaveLength(25);
+    });
+
+    it("returns 9 points when gridSize is 3x3", () => {
+      const points = generateCalibrationPoints(800, 600, 50, "3x3");
+      expect(points).toHaveLength(9);
     });
 
     it("uses padding for bounds", () => {
@@ -38,9 +48,9 @@ describe("calibration", () => {
   });
 
   describe("generateValidationPoints", () => {
-    it("returns 5 validation points", () => {
+    it("returns 9 validation points (center + 4 corners + 4 edges)", () => {
       const points = generateValidationPoints(800, 600, 100);
-      expect(points).toHaveLength(5);
+      expect(points).toHaveLength(9);
       points.forEach((p) => {
         expect(p).toHaveProperty("id");
         expect(p).toHaveProperty("x");
@@ -83,8 +93,13 @@ describe("calibration", () => {
     });
 
     it("returns eyes open when eyeOpenness above threshold", () => {
-      const r = checkStability({ ...baseFeatures, eyeOpenness: 0.1 }, null);
+      const r = checkStability({ ...baseFeatures, eyeOpenness: 0.15 }, null);
       expect(r.eyesOpen).toBe(true);
+    });
+
+    it("returns eyes closed when eyeOpenness below threshold", () => {
+      const r = checkStability({ ...baseFeatures, eyeOpenness: 0.1 }, null);
+      expect(r.eyesOpen).toBe(false);
     });
   });
 });

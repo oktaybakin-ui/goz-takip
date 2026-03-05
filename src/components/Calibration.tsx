@@ -103,7 +103,9 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = 10000;  // 55 örnek/nokta için yeterli süre
+    const POINT_TIMEOUT_MS = 10000;
+    // Duplicate detection: rAF ~60fps ama faceTracker ~30fps, aynı features tekrar okunabilir
+    let lastFeaturesRef: EyeFeatures | null = null;
 
     const advanceToNext = async () => {
       samplingRef.current = false;
@@ -127,7 +129,6 @@ export default function Calibration({
     const sampleLoop = () => {
       if (!samplingRef.current) return;
 
-      // Nokta başına zaman aşımı — takılmayı önle
       if (Date.now() - pointStartTime > POINT_TIMEOUT_MS) {
         logger.warn("[Calibration] Nokta zaman aşımı, sonrakine geçiliyor");
         advanceToNext();
@@ -139,6 +140,17 @@ export default function Calibration({
         animFrameRef.current = requestAnimationFrame(sampleLoop);
         return;
       }
+
+      // Duplicate detection: aynı iris pozisyonu = aynı frame, atla
+      if (lastFeaturesRef &&
+          features.leftIrisX === lastFeaturesRef.leftIrisX &&
+          features.leftIrisY === lastFeaturesRef.leftIrisY &&
+          features.rightIrisX === lastFeaturesRef.rightIrisX &&
+          features.rightIrisY === lastFeaturesRef.rightIrisY) {
+        animFrameRef.current = requestAnimationFrame(sampleLoop);
+        return;
+      }
+      lastFeaturesRef = features;
 
       const stability = checkStability(features, prevFeaturesRef.current);
       prevFeaturesRef.current = features;

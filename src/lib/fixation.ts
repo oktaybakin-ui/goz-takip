@@ -34,7 +34,12 @@ export interface Saccade {
   startTime: number;
   endTime: number;
   velocity: number;
+  amplitude: number;      // başlangıç-bitiş mesafesi (px)
+  peakVelocity: number;   // saccade içindeki max hız (px/s)
+  direction: number;       // saccade açısı (radyan, 0=sağ, π/2=aşağı)
 }
+
+export type FixationMode = "ivt" | "idt" | "hybrid";
 
 export interface ROICluster {
   id: number;
@@ -70,6 +75,16 @@ export class FixationDetector {
   private minFixationDuration: number;
   private maxFixationRadius: number;
 
+  // I-DT parametreleri
+  private maxDispersion: number;
+  private idtMinDuration: number;
+
+  // Hybrid mod
+  private mode: FixationMode;
+
+  // Saccade acceleration eşiği
+  private maxAcceleration: number;
+
   // DBSCAN parametreleri
   private dbscanEps: number;
   private dbscanMinPts: number;
@@ -92,18 +107,32 @@ export class FixationDetector {
   private readonly VELOCITY_WINDOW = 3;
   private recentValidPoints: GazePoint[] = [];
 
+  // Saccade peak velocity tracking
+  private currentSaccadePeakVelocity: number = 0;
+  private saccadeStartPoint: GazePoint | null = null;
+  private previousVelocity: number = 0;
+  private previousTimestamp: number = 0;
+
   constructor(
     velocityThreshold: number = 55,
     minFixationDuration: number = 100,
     maxFixationRadius: number = 40,
     dbscanEps: number = 35,
-    dbscanMinPts: number = 5
+    dbscanMinPts: number = 5,
+    mode: FixationMode = "ivt",
+    maxDispersion: number = 35,
+    idtMinDuration: number = 150,
+    maxAcceleration: number = 8000
   ) {
     this.velocityThreshold = velocityThreshold;
     this.minFixationDuration = minFixationDuration;
     this.maxFixationRadius = maxFixationRadius;
     this.dbscanEps = dbscanEps;
     this.dbscanMinPts = dbscanMinPts;
+    this.mode = mode;
+    this.maxDispersion = maxDispersion;
+    this.idtMinDuration = idtMinDuration;
+    this.maxAcceleration = maxAcceleration;
   }
 
   startTracking(): void {
@@ -115,6 +144,10 @@ export class FixationDetector {
     this.postBlinkCounter = 0;
     this.lastValidTimestamp = 0;
     this.trackingStartTime = performance.now();
+    this.currentSaccadePeakVelocity = 0;
+    this.saccadeStartPoint = null;
+    this.previousVelocity = 0;
+    this.previousTimestamp = 0;
   }
 
   /**
@@ -192,7 +225,53 @@ export class FixationDetector {
       (point.x - centerX) ** 2 + (point.y - centerY) ** 2
     );
 
-    if (velocity < this.velocityThreshold && distFromCenter < this.maxFixationRadius) {
+    // Acceleration hesabı (saccade onset/offset tespiti için)
+    let acceleration = 0;
+    if (this.previousTimestamp > 0 && dt > 0.001) {
+      const dv = velocity - this.previousVelocity;
+      acceleration = Math.abs(dv / dt);
+    }
+
+    // I-VT kararı: velocity-based fixation
+    const ivtIsFixation = velocity < this.velocityThreshold && distFromCenter < this.maxFixationRadius;
+
+    // I-DT kararı: dispersion-based fixation
+    let idtIsFixation = true;
+    if (this.mode === "idt" || this.mode === "hybrid") {
+      idtIsFixation = this.checkIDTFixation(point);
+    }
+
+    // Nihai fixation kararı: mode'a göre
+    let isFixation: boolean;
+    if (this.mode === "ivt") {
+      isFixation = ivtIsFixation;
+    } else if (this.mode === "idt") {
+      isFixation = idtIsFixation;
+    } else {
+      // Hybrid: her ikisi de fixation demeli (daha sıkı)
+      isFixation = ivtIsFixation && idtIsFixation;
+    }
+
+    // Saccade onset tespiti: velocity VEYA acceleration eşiği aşıldı
+    const isSaccadeOnset = velocity >= this.velocityThreshold || acceleration >= this.maxAcceleration;
+
+    // Track peak velocity for saccade metrics
+    if (isSaccadeOnset && !this.saccadeStartPoint) {
+      this.saccadeStartPoint = lastPoint;
+      this.currentSaccadePeakVelocity = velocity;
+    }
+    if (this.saccadeStartPoint) {
+      this.currentSaccadePeakVelocity = Math.max(this.currentSaccadePeakVelocity, velocity);
+    }
+
+    this.previousVelocity = velocity;
+    this.previousTimestamp = point.timestamp;
+
+    if (isFixation) {
+      // Saccade bitti (fixation'a geçiş)
+      this.saccadeStartPoint = null;
+      this.currentSaccadePeakVelocity = 0;
+
       this.currentFixationPoints.push(point);
       return null;
     } else {
@@ -200,6 +279,14 @@ export class FixationDetector {
       this.currentFixationPoints = [point];
 
       if (completedFixation && lastPoint) {
+        const amplitude = Math.sqrt(
+          (point.x - completedFixation.x) ** 2 + (point.y - completedFixation.y) ** 2
+        );
+        const direction = Math.atan2(
+          point.y - completedFixation.y,
+          point.x - completedFixation.x
+        );
+
         this.saccades.push({
           startX: completedFixation.x,
           startY: completedFixation.y,
@@ -208,11 +295,51 @@ export class FixationDetector {
           startTime: completedFixation.endTime,
           endTime: point.timestamp,
           velocity,
+          amplitude,
+          peakVelocity: this.currentSaccadePeakVelocity > 0 ? this.currentSaccadePeakVelocity : velocity,
+          direction,
         });
       }
 
       return completedFixation;
     }
+  }
+
+  /**
+   * I-DT (Dispersion Threshold) kontrolü:
+   * Mevcut fixation penceresindeki tüm noktaların bounding box'ı maxDispersion'dan küçükse
+   * VE süre idtMinDuration'dan uzunsa → fixation.
+   */
+  private checkIDTFixation(newPoint: GazePoint): boolean {
+    const pts = [...this.currentFixationPoints, newPoint];
+    if (pts.length < 2) return true; // Henüz yeterli veri yok, fixation varsay
+
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    for (const p of pts) {
+      if (p.x < minX) minX = p.x;
+      if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y;
+      if (p.y > maxY) maxY = p.y;
+    }
+
+    const dispersionX = maxX - minX;
+    const dispersionY = maxY - minY;
+    const dispersion = Math.max(dispersionX, dispersionY);
+
+    // Dispersion küçükse → fixation olabilir
+    if (dispersion > this.maxDispersion) {
+      return false; // Çok dağınık, fixation değil
+    }
+
+    // Süre kontrolü (opsiyonel — yeterli süre varsa fixation)
+    const duration = newPoint.timestamp - pts[0].timestamp;
+    if (duration < this.idtMinDuration && pts.length > 3) {
+      // Süre kısa ama dispersion düşükse yine de fixation (noktalar birikiyor)
+      return true;
+    }
+
+    return true;
   }
 
   private finalizeFixation(): Fixation | null {

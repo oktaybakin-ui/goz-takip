@@ -1,11 +1,14 @@
 /**
  * Advanced Iris Detection — deterministik, kararlı iris merkezi tespiti.
  *
- * RANSAC kaldırıldı (5 noktada rastgele örnekleme frame-to-frame titreşim yaratıyordu).
- * Yerine:
- *  1. Least-squares circle fit (tüm noktaları kullanır, deterministik)
- *  2. Güçlü temporal smoothing (exponential MA, 12 frame geçmiş, yavaş decay)
+ * Pipeline (minimal smoothing — sinyal korunması öncelikli):
+ *  1. Least-squares circle fit (Kåsa yöntemi, deterministik)
+ *  2. Hafif 3-frame temporal smoothing (sadece landmark jitter bastırma)
  *  3. Ellipse fitting (perspektif kompanzasyonu)
+ *
+ * NOT: EMA smoothing kaldırıldı. Birden fazla smoothing katmanı iris sinyalini
+ * öldürüyordu (0.15 birimlik bakış aralığını 0.05'e düşürüyordu). Tek smoothing
+ * katmanı final output'ta (One Euro Filter, gazeModel.ts) uygulanır.
  */
 
 import { logger } from './logger';
@@ -28,24 +31,17 @@ export class AdvancedIrisDetector {
   private readonly MIN_IRIS_RADIUS = 0.005;
   private readonly MAX_IRIS_RADIUS = 0.025;
 
-  // Temporal smoothing geçmişi — uzun geçmiş + yavaş decay = kararlı çıktı
+  // Hafif temporal smoothing — sadece landmark jitter bastırma (3 frame, hızlı decay)
   private irisHistory: Map<'left' | 'right', IrisFeatures[]> = new Map([
     ['left', []],
     ['right', []]
   ]);
-  private readonly HISTORY_SIZE = 12;
-
-  // Son kararlı pozisyon (EMA ile sürekli güncellenir)
-  private lastStable: Map<'left' | 'right', { x: number; y: number } | null> = new Map([
-    ['left', null],
-    ['right', null]
-  ]);
-  private readonly EMA_ALPHA = 0.35; // 0=tamamen geçmiş, 1=tamamen yeni. 0.35 = güçlü smoothing
+  private readonly HISTORY_SIZE = 3; // 12→3: sinyal koruması için minimal
 
   private useEllipseFitting: boolean = true;
 
   /**
-   * Deterministik iris tespiti: least-squares circle fit + EMA + temporal smoothing
+   * Deterministik iris tespiti: least-squares circle fit + hafif temporal smoothing
    */
   detectIris(
     eyeLandmarks: Array<{ x: number; y: number }>,
@@ -70,25 +66,16 @@ export class AdvancedIrisDetector {
       combinedCenter = basicCenter;
     }
 
-    // EMA smoothing: ani sıçramaları bastır
-    const lastPos = this.lastStable.get(eyeType);
-    if (lastPos) {
-      const dist = Math.sqrt((combinedCenter.x - lastPos.x) ** 2 + (combinedCenter.y - lastPos.y) ** 2);
-      // Büyük sıçrama: saccade olabilir → daha hızlı takip et
-      const alpha = dist > 0.03 ? 0.6 : this.EMA_ALPHA;
-      combinedCenter = {
-        x: alpha * combinedCenter.x + (1 - alpha) * lastPos.x,
-        y: alpha * combinedCenter.y + (1 - alpha) * lastPos.y
-      };
-    }
-    this.lastStable.set(eyeType, { ...combinedCenter });
+    // EMA KALDIRILDI — sinyal korunması için. Eski davranış:
+    // Her frame'i öncekiyle karıştırıyordu (alpha=0.35), bakış aralığını daraltıyordu.
+    // Artık doğrudan circle fit sonucu kullanılıyor.
 
     const irisRadius = this.estimateIrisRadius(irisLandmarks, combinedCenter, eyeWidth);
 
     // Confidence: LS fit kalitesi
     const confidence = lsCircle ? lsCircle.fitness : 0.5;
 
-    // Temporal smoothing (geçmiş frame'lerle ağırlıklı ortalama)
+    // Hafif temporal smoothing (sadece 3 frame, hızlı decay — landmark jitter bastırma)
     const smoothedFeatures = this.temporalSmoothing({
       center: combinedCenter,
       radius: irisRadius,
@@ -119,10 +106,6 @@ export class AdvancedIrisDetector {
     const n = points.length;
     if (n < 3) return null;
 
-    // Kåsa method: minimize algebraic distance
-    // Solve: [x_i^2+y_i^2, x_i, y_i, 1] * [A, B, C, D]^T = 0
-    // Center = (-B/2A, -C/2A), R = sqrt(B^2+C^2-4AD) / (2|A|)
-
     let sumX = 0, sumY = 0, sumX2 = 0, sumY2 = 0;
     let sumXY = 0, sumX3 = 0, sumY3 = 0, sumX2Y = 0, sumXY2 = 0;
 
@@ -140,7 +123,6 @@ export class AdvancedIrisDetector {
       sumXY2 += p.x * y2;
     }
 
-    // Normal equations: A * [a, b]^T = B where center = (a, b)
     const A11 = sumX2 - sumX * sumX / n;
     const A12 = sumXY - sumX * sumY / n;
     const A22 = sumY2 - sumY * sumY / n;
@@ -154,14 +136,12 @@ export class AdvancedIrisDetector {
     const cx = (A22 * b1 - A12 * b2) / det;
     const cy = (A11 * b2 - A12 * b1) / det;
 
-    // Radius
     let sumR = 0;
     for (const p of points) {
       sumR += Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2);
     }
     const r = sumR / n;
 
-    // Fitness: noktaların çembere ne kadar yakın olduğu (0-1)
     let totalResidual = 0;
     for (const p of points) {
       const d = Math.sqrt((p.x - cx) ** 2 + (p.y - cy) ** 2);
@@ -192,8 +172,9 @@ export class AdvancedIrisDetector {
   }
 
   /**
-   * Temporal smoothing — daha yavaş decay ile kararlı çıktı.
-   * decay=0.3: son frame ağırlığı ~0.74, 5 frame öncesi ~0.22, 10 frame öncesi ~0.05
+   * Hafif temporal smoothing — 3 frame, yüksek decay (0.8).
+   * Sadece MediaPipe landmark jitter'ı bastırır, bakış sinyalini bozmaz.
+   * Eski: 12 frame, decay 0.3 → sinyali %70 bastırıyordu.
    */
   private temporalSmoothing(
     current: IrisFeatures,
@@ -206,7 +187,7 @@ export class AdvancedIrisDetector {
       history.shift();
     }
 
-    if (history.length < 3) {
+    if (history.length < 2) {
       return current;
     }
 
@@ -215,9 +196,10 @@ export class AdvancedIrisDetector {
     let weightedRadius = 0;
     let weightedConfidence = 0;
 
-    // Decay=0.3 (önceki 0.5'ten düşük → daha yavaş unutma → daha kararlı)
+    // Decay=0.8 (eskiden 0.3): son frame ağırlığı ~1.0, 1 frame öncesi ~0.45, 2 frame öncesi ~0.20
+    // Hızlı decay = güncel veriye yüksek güven = bakış sinyali korunur
     history.forEach((features, i) => {
-      const weight = Math.exp(0.3 * (i - history.length + 1));
+      const weight = Math.exp(0.8 * (i - history.length + 1));
       weightedCenter.x += features.center.x * weight;
       weightedCenter.y += features.center.y * weight;
       weightedRadius += features.radius * weight;
@@ -296,7 +278,5 @@ export class AdvancedIrisDetector {
     this.irisHistory.clear();
     this.irisHistory.set('left', []);
     this.irisHistory.set('right', []);
-    this.lastStable.set('left', null);
-    this.lastStable.set('right', null);
   }
 }

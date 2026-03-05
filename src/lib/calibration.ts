@@ -13,6 +13,7 @@
 
 import { EyeFeatures, CalibrationSample, GazeModel } from "./gazeModel";
 import { logger } from "./logger";
+import { isMobileDevice } from "./deviceDetect";
 
 export interface CalibrationPoint {
   id: number;
@@ -50,15 +51,32 @@ export interface StabilityCheck {
  * 25 noktalı (5×5) kalibrasyon grid'i — serpantin (yılan) sıralaması.
  * Rastgele sıraya göre göz hareketi çok daha az, kullanıcı deneyimi iyileşir.
  */
+export type GridSize = "3x3" | "4x4" | "5x5";
+
 export function generateCalibrationPoints(
   screenWidth: number,
   screenHeight: number,
-  padding: number = 50
+  padding?: number,
+  gridSize?: GridSize
 ): CalibrationPoint[] {
+  const mobile = isMobileDevice();
+  const effectivePadding = padding ?? (mobile ? 30 : 50);
+  padding = effectivePadding;
   const points: CalibrationPoint[] = [];
   let id = 0;
-  const cols = 4;  // 16 nokta (4x4) — daha az ama nokta başına daha fazla örnek
-  const rows = 4;
+
+  // Grid boyutu belirleme: explicit parametre > cihaz default
+  let cols: number;
+  let rows: number;
+  if (gridSize) {
+    const [r, c] = gridSize.split("x").map(Number);
+    rows = r;
+    cols = c;
+  } else {
+    cols = mobile ? 3 : 4;  // Mobilde 3×3=9 nokta, masaüstünde 4×4=16
+    rows = mobile ? 3 : 4;
+  }
+
   for (let row = 0; row < rows; row++) {
     const isEvenRow = row % 2 === 0;
     for (let ci = 0; ci < cols; ci++) {
@@ -71,6 +89,16 @@ export function generateCalibrationPoints(
     }
   }
   return points;
+}
+
+/** Grid boyutuna göre adaptif minimum örnek sayısı */
+export function getMinSamplesPerPoint(gridSize: GridSize): number {
+  switch (gridSize) {
+    case "5x5": return 40;  // Çok nokta → her noktada daha az örnek yeterli
+    case "4x4": return 55;  // Varsayılan
+    case "3x3": return 65;  // Az nokta → her noktada daha çok örnek gerekli
+    default: return 55;
+  }
 }
 
 /**
@@ -114,7 +142,7 @@ export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: 0.10,
+    headMovement: isMobileDevice() ? 0.18 : 0.10,
     minConfidence: 0.3,
     minEyeOpenness: 0.12,
   }
@@ -181,9 +209,10 @@ export class CalibrationManager {
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
   private readonly IRIS_BUFFER_SIZE = 8;   // Kompakt ama yeterli
-  private readonly IRIS_STD_MAX = 0.028;   // Daha sıkı: sadece gerçekten sabit bakışta veri al
-  private readonly MIN_SAMPLES_PER_POINT = 55; // 16 nokta × 55 örnek ≈ 880 toplam (25×40=1000'e yakın)
-  private readonly MIN_CONFIDENCE_CALIBRATION = 0.45; // 0.40'tan 0.45'e
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.040 : 0.028;
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 40 : 55;
+  private gridSize: GridSize | undefined = undefined;
+  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.35 : 0.45;
   private readonly RETRY_QUALITY_THRESHOLD = 30; // 55 örnek hedefinde 30 altı → retry
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
@@ -202,7 +231,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: 16,  // 4x4 grid
+      totalPoints: this.gridSize ? parseInt(this.gridSize.split("x")[0]) ** 2 : (isMobileDevice() ? 9 : 16),
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,
@@ -229,9 +258,15 @@ export class CalibrationManager {
     return this.state;
   }
 
+  /** Grid boyutunu ayarla (kalibrasyon başlatılmadan önce) */
+  setGridSize(size: GridSize): void {
+    this.gridSize = size;
+    this.MIN_SAMPLES_PER_POINT = getMinSamplesPerPoint(size);
+  }
+
   // Kalibrasyonu başlat - TAM EKRAN boyutları kullanılır
   startCalibration(screenWidth: number, screenHeight: number): void {
-    this.calibrationPoints = generateCalibrationPoints(screenWidth, screenHeight);
+    this.calibrationPoints = generateCalibrationPoints(screenWidth, screenHeight, undefined, this.gridSize);
     this.validationPoints = generateValidationPoints(screenWidth, screenHeight);
 
     const diagonal = Math.sqrt(screenWidth ** 2 + screenHeight ** 2);

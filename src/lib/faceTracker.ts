@@ -14,6 +14,7 @@
 import { EyeFeatures } from "./gazeModel";
 import { logger } from "./logger";
 import { AdvancedIrisDetector } from "./advancedIrisDetection";
+import { isMobileDevice } from "./deviceDetect";
 
 // MediaPipe landmark indeksleri
 const LEFT_EYE_INDICES = {
@@ -112,14 +113,11 @@ export class FaceTracker {
   private irisOffsetLeft: { x: number; y: number } = { x: 0, y: 0 };
   private irisOffsetRight: { x: number; y: number } = { x: 0, y: 0 };
   
-  // İris pozisyon geçmişi (stabilizasyon için)
-  private irisHistory: {
-    leftX: number[], leftY: number[],
-    rightX: number[], rightY: number[]
-  } = { leftX: [], leftY: [], rightX: [], rightY: [] };
-  private readonly IRIS_HISTORY_SIZE = 7; // 7-frame median: güçlü gürültü bastırma (iris titreşimini önler)
+  // Median filtre KALDIRILDI — iris sinyalini öldürüyordu.
+  // AdvancedIrisDetector'daki hafif temporal smoothing (3 frame) yeterli.
+  // Final smoothing One Euro Filter'da (gazeModel.ts) yapılır.
 
-  // Advanced iris detector (RANSAC + temporal smoothing + ellipse fitting)
+  // Advanced iris detector (least-squares circle fit + hafif temporal smoothing)
   private advancedIrisDetector: AdvancedIrisDetector;
   private useAdvancedIris: boolean = true;
 
@@ -216,11 +214,12 @@ export class FaceTracker {
       },
     });
 
+    const mobile = isMobileDevice();
     this.faceMesh.setOptions({
       maxNumFaces: 1,
       refineLandmarks: true, // İris landmark'ları için zorunlu
-      minDetectionConfidence: 0.6,
-      minTrackingConfidence: 0.6,
+      minDetectionConfidence: mobile ? 0.4 : 0.6,
+      minTrackingConfidence: mobile ? 0.4 : 0.6,
     });
 
     this.faceMesh.onResults((results: import("@/types/mediapipe").MediaPipeFaceMeshResults) => {
@@ -407,6 +406,7 @@ export class FaceTracker {
           if (
             this.lastEyeBbox &&
             vw >= 640 &&
+            !isMobileDevice() &&
             this.zoomDisabledFrames === 0 &&
             this.consecutiveErrors === 0
           ) {
@@ -583,31 +583,8 @@ export class FaceTracker {
       rightIrisStable = rightIrisRaw;
     }
 
-    // İris pozisyon geçmişi güncelle (ek median filtre — advanced üstüne bile faydalı)
-    this.irisHistory.leftX.push(leftIrisStable.x);
-    this.irisHistory.leftY.push(leftIrisStable.y);
-    this.irisHistory.rightX.push(rightIrisStable.x);
-    this.irisHistory.rightY.push(rightIrisStable.y);
-
-    // Geçmiş boyutunu sınırla
-    if (this.irisHistory.leftX.length > this.IRIS_HISTORY_SIZE) {
-      this.irisHistory.leftX.shift();
-      this.irisHistory.leftY.shift();
-      this.irisHistory.rightX.shift();
-      this.irisHistory.rightY.shift();
-    }
-
-    // 5-frame median filtre: RANSAC çıktısını bile stabilize eder
-    const getMedian = (arr: number[]) => {
-      const sorted = [...arr].sort((a, b) => a - b);
-      const mid = Math.floor(sorted.length / 2);
-      return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-    };
-
-    if (this.irisHistory.leftX.length >= 3) {
-      leftIrisStable = { x: getMedian(this.irisHistory.leftX), y: getMedian(this.irisHistory.leftY) };
-      rightIrisStable = { x: getMedian(this.irisHistory.rightX), y: getMedian(this.irisHistory.rightY) };
-    }
+    // Median filtre KALDIRILDI — iris sinyalini öldürüyordu.
+    // AdvancedIrisDetector'daki 3-frame temporal smoothing yeterli.
 
     // Kullanıcı manuel offset (kalibrasyon öncesi hizalama)
     const leftIris = { x: leftIrisStable.x + this.irisOffsetLeft.x, y: leftIrisStable.y + this.irisOffsetLeft.y };

@@ -9,7 +9,6 @@
  */
 
 import { logger } from "./logger";
-import { KalmanFilter2D } from "./kalmanFilter";
 import { AdvancedIrisDetector } from "./advancedIrisDetection";
 import { createInlineWorker, postWorkerMessage } from "./workers/createWorker";
 import { gazeModelTrainWorkerFn, type TrainWorkerInput, type TrainWorkerOutput } from "./workers/gazeModelTrainWorker";
@@ -39,6 +38,8 @@ export interface EyeFeatures {
   leftEyeWidth: number;
   rightEyeWidth: number;
   confidence: number;
+  // Blink durumu (BlinkDetector tarafından ayarlanır)
+  isBlinking?: boolean;
 }
 
 export interface GazePoint {
@@ -259,12 +260,11 @@ export class OneEuroFilter {
   
   // Hareket hızına göre parametreleri dinamik ayarla
   setDynamicParams(velocity: number): void {
-    // Hız arttıkça minCutoff artır (daha az smoothing)
-    // Sabitken (velocity < 50px/s) daha fazla smoothing → jitter azalır
-    // Hızlıyken → gecikme azalır (saccade takibi)
-    const speedFactor = Math.min(velocity / 400, 1.0);
-    this.minCutoff = 0.8 + speedFactor * 3.5; // 0.8 - 4.3 arası (fixation: 0.8 → çok güçlü smoothing)
-    this.beta = 0.005 + speedFactor * 0.06; // 0.005 - 0.065 arası
+    // Hız arttıkça minCutoff artır (daha az smoothing → saccade gecikmesi azalır)
+    // Sabitken daha fazla smoothing → jitter azalır
+    const speedFactor = Math.min(velocity / 500, 1.0);
+    this.minCutoff = 1.2 + speedFactor * 4.0; // 1.2 - 5.2 arası (fixation: 1.2, saccade: 5.2)
+    this.beta = 0.01 + speedFactor * 0.08; // 0.01 - 0.09 arası
   }
 
   private alpha(cutoff: number, dt: number): number {
@@ -333,25 +333,25 @@ export class GazeModel {
   // Referans baş pozu (kalibrasyon sırasındaki ortalama)
   private refPose: { yaw: number; pitch: number; roll: number; faceScale: number } | null = null;
 
+  // Head rotation compensation: kalibrasyon sırasında öğrenilen eye-in-head offset
+  private eyeInHeadX: number = 0; // Kalibrasyondaki ortalama iris relX (referans)
+  private eyeInHeadY: number = 0;
+
   // Tahmin geçmişi (outlier rejection)
   private predictionHistory: { x: number; y: number; t: number }[] = [];
   private readonly historyMaxSize: number = 11;
   
-  // Kalman filter for additional smoothing
-  private kalmanFilter: KalmanFilter2D | null = null;
-  private useKalmanFilter: boolean = true;
+  // Kalman filter KALDIRILDI:
+  // One Euro zaten filtrelenmiş veriyi Kalman'a vermek istatistiksel olarak yanlış
+  // (Kalman, ham gürültülü veri bekler). Çift filtreleme sinyal kaybı + gecikme yaratıyordu.
 
-  constructor(lambda: number = 0.008, useKalman: boolean = true) {
+  constructor(lambda: number = 0.008) {
     this.lambda = lambda;
-    this.useKalmanFilter = useKalman;
-    if (useKalman) {
-      this.kalmanFilter = new KalmanFilter2D(0.08, 8.0);
-    }
-    // One Euro Filter: fixation sırasında güçlü smoothing, saccade sırasında düşük gecikme
-    // Düşük minCutoff = güçlü smoothing (fixation sırasında jitter azaltır)
-    // Yüksek beta = hız artınca cutoff hızla yükselir → saccade gecikmesi azalır
-    this.filterX = new OneEuroFilter(1.2, 0.09, 1.0);
-    this.filterY = new OneEuroFilter(1.0, 0.08, 1.0);
+    // One Euro Filter — TEK smoothing katmanı (tüm pipeline'da).
+    // minCutoff: düşük = güçlü smoothing (fixation), yüksek = hızlı takip (saccade)
+    // beta: hız artınca cutoff ne kadar hızlı yükselsin
+    this.filterX = new OneEuroFilter(1.5, 0.07, 1.0);
+    this.filterY = new OneEuroFilter(1.5, 0.07, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -382,33 +382,27 @@ export class GazeModel {
 
     const avgEAR = (features.leftEAR + features.rightEAR) / 2;
 
-    // Pose delta: kalibrasyondaki referans pozdan sapma
-    const dYaw = this.refPose ? features.yaw - this.refPose.yaw : 0;
-    const dPitch = this.refPose ? features.pitch - this.refPose.pitch : 0;
-    const dRoll = this.refPose ? features.roll - this.refPose.roll : 0;
-    const dScale = this.refPose ? features.faceScale - this.refPose.faceScale : 0;
+    // dYaw/dPitch/dRoll/dScale KALDIRILDI:
+    // Kalibrasyon sırasında hep ~0 (kullanıcı sabit duruyor), model bunları öğrenemiyor.
+    // Tracking sırasında non-zero oluyor → pure extrapolation → hatalı tahmin.
 
     return [
-      avgRelX,
-      avgRelY,
-      features.leftIrisRelX,
-      features.leftIrisRelY,
-      features.rightIrisRelX,
-      features.rightIrisRelY,
-      avgRawX,
-      avgRawY,
-      features.yaw,
-      features.pitch,
-      features.roll,
-      features.faceScale,
-      irisAsymX,
-      irisAsymY,
-      avgEAR,
-      features.pupilRadius,
-      dYaw,
-      dPitch,
-      dRoll,
-      dScale,
+      avgRelX,          // [0]
+      avgRelY,          // [1]
+      features.leftIrisRelX,   // [2]
+      features.leftIrisRelY,   // [3]
+      features.rightIrisRelX,  // [4]
+      features.rightIrisRelY,  // [5]
+      avgRawX,          // [6]
+      avgRawY,          // [7]
+      features.yaw,     // [8]
+      features.pitch,   // [9]
+      features.roll,    // [10]
+      features.faceScale, // [11]
+      irisAsymX,        // [12]
+      irisAsymY,        // [13]
+      avgEAR,           // [14]
+      features.pupilRadius, // [15]
     ];
   }
 
@@ -460,9 +454,15 @@ export class GazeModel {
     const refRoll = cleanSamples.reduce((s, sp) => s + sp.features.roll, 0) / cleanSamples.length;
     const refScale = cleanSamples.reduce((s, sp) => s + sp.features.faceScale, 0) / cleanSamples.length;
     this.refPose = { yaw: refYaw, pitch: refPitch, roll: refRoll, faceScale: refScale };
+
+    // Eye-in-head referans: kalibrasyon sırasındaki ortalama iris pozisyonu
+    this.eyeInHeadX = cleanSamples.reduce((s, sp) => s + (sp.features.leftIrisRelX + sp.features.rightIrisRelX) / 2, 0) / cleanSamples.length;
+    this.eyeInHeadY = cleanSamples.reduce((s, sp) => s + (sp.features.leftIrisRelY + sp.features.rightIrisRelY) / 2, 0) / cleanSamples.length;
+
     logger.log("[GazeModel] Referans poz:", {
       yaw: refYaw.toFixed(3), pitch: refPitch.toFixed(3),
       roll: refRoll.toFixed(3), scale: refScale.toFixed(3),
+      eyeInHeadX: this.eyeInHeadX.toFixed(3), eyeInHeadY: this.eyeInHeadY.toFixed(3),
     });
 
     const rawInputs = cleanSamples.map((s) => this.featuresToInput(s.features));
@@ -509,10 +509,9 @@ export class GazeModel {
     // Ekran merkezi ve köşegen (spatial weighting + residual cleanup için)
     const screenCenterX = targetsX.reduce((s, v) => s + v, 0) / targetsX.length;
     const screenCenterY = targetsY.reduce((s, v) => s + v, 0) / targetsY.length;
-    const screenDiag = Math.sqrt(
-      Math.max(...targetsX.map(x => (x - screenCenterX) ** 2)) +
-      Math.max(...targetsY.map(y => (y - screenCenterY) ** 2))
-    ) || 1;
+    const maxDx = Math.max(...targetsX.map(x => Math.abs(x - screenCenterX)));
+    const maxDy = Math.max(...targetsY.map(y => Math.abs(y - screenCenterY)));
+    const screenDiag = Math.sqrt(maxDx ** 2 + maxDy ** 2) || 1;
 
     // Spatial + confidence weighting: kenar/köşe örnekleri daha yüksek ağırlık alır
     // Bu sayede model kenar bölgelerini daha iyi öğrenir (kalite artışı, ek süre yok)
@@ -622,10 +621,9 @@ export class GazeModel {
       // Retrain'de de spatial weighting koru (kenar doğruluğu korunsun)
       const screenCenterX2 = targetsX2.reduce((s, v) => s + v, 0) / targetsX2.length;
       const screenCenterY2 = targetsY2.reduce((s, v) => s + v, 0) / targetsY2.length;
-      const screenDiag2 = Math.sqrt(
-        Math.max(...targetsX2.map(x => (x - screenCenterX2) ** 2)) +
-        Math.max(...targetsY2.map(y => (y - screenCenterY2) ** 2))
-      ) || 1;
+      const maxDx2 = Math.max(...targetsX2.map(x => Math.abs(x - screenCenterX2)));
+      const maxDy2 = Math.max(...targetsY2.map(y => Math.abs(y - screenCenterY2)));
+      const screenDiag2 = Math.sqrt(maxDx2 ** 2 + maxDy2 ** 2) || 1;
       const sampleWeights2 = cleanSamples2.map((s) => {
         const confWeight = Math.max(0.15, s.features.confidence);
         const dist = Math.sqrt(
@@ -699,10 +697,13 @@ export class GazeModel {
    * @returns GazePoint (x, y, timestamp, confidence) veya yetersiz veride null
    */
   predict(features: EyeFeatures): GazePoint | null {
-    // Blink detection: EAR çok düşükse göz kapalı
+    // Blink detection: BlinkDetector varsa onun kararını kullan, yoksa EAR fallback
+    if (features.isBlinking === true) {
+      return null;
+    }
     const avgEAR = (features.leftEAR + features.rightEAR) / 2;
-    if (avgEAR < 0.18) {
-      // Göz kapalı, takip yapma
+    if (features.isBlinking === undefined && avgEAR < 0.18) {
+      // Fallback: BlinkDetector entegre değilse eski EAR kontrolü
       return null;
     }
     
@@ -744,6 +745,29 @@ export class GazeModel {
       correctedY = raw.y + this.driftOffsetY;
     }
 
+    // Head Pose Compensation (3D decomposition):
+    // gaze_screen = gaze_eye_in_head + head_rotation_projected
+    // Kalibrasyon sırasında eye-in-head öğrenilir; tracking sırasında
+    // baş dönüşü farkı düzeltilir.
+    if (this.refPose) {
+      const dYaw = features.yaw - this.refPose.yaw;
+      const dPitch = features.pitch - this.refPose.pitch;
+
+      // Head rotation'ın ekrana yansımasını tahmin et (basit projeksiyon)
+      // Baş sağa dönünce gaze sola kayar, yukarı eğilince aşağı kayar
+      // Katsayılar empirik — ekran boyutuna bağlı normalizasyon
+      const screenW = typeof window !== "undefined" ? window.innerWidth : 1920;
+      const screenH = typeof window !== "undefined" ? window.innerHeight : 1080;
+      const headCompX = -dYaw * screenW * 0.35; // ~%35 ekran genişliği/radyan
+      const headCompY = -dPitch * screenH * 0.30;
+
+      // Sadece küçük baş hareketlerinde düzelt (büyük dönüşlerde model extrapolation daha iyi)
+      if (Math.abs(dYaw) < 0.25 && Math.abs(dPitch) < 0.20) {
+        correctedX += headCompX;
+        correctedY += headCompY;
+      }
+    }
+
     // Referans pozdan sapma büyükse confidence düşür (ekstrapolasyon güvensiz)
     let poseConfPenalty = 1.0;
     if (this.refPose) {
@@ -771,9 +795,9 @@ export class GazeModel {
       const screenMax = typeof window !== "undefined"
         ? Math.max(window.innerWidth, window.innerHeight)
         : 1920;
-      // Gevşek eşik: gaze noktası kaybını önle, heatmap verisi toplansın
-      const baseThreshold = screenMax * 0.28;
-      const velocityBonus = Math.min(avgVelocity * 150, screenMax * 0.25);
+      // Gevşek eşik: saccade'ları yemeden sadece aşırı outlier'ları reddet
+      const baseThreshold = screenMax * 0.40;
+      const velocityBonus = Math.min(avgVelocity * 200, screenMax * 0.35);
       const jumpThreshold = baseThreshold + velocityBonus;
 
       if (dist > jumpThreshold) {
@@ -795,24 +819,9 @@ export class GazeModel {
       }
     }
 
-    // One Euro Filter uygula
-    const filteredX = this.filterX.filter(correctedX, now);
-    const filteredY = this.filterY.filter(correctedY, now);
-    
-    // Kalman filter (opsiyonel ekstra smoothing)
-    let finalX = filteredX;
-    let finalY = filteredY;
-    
-    if (this.useKalmanFilter && this.kalmanFilter) {
-      const kalmanResult = this.kalmanFilter.filter(filteredX, filteredY, now, features.confidence);
-      finalX = kalmanResult.x;
-      finalY = kalmanResult.y;
-
-      // Update One Euro filter parameters based on Kalman velocity
-      const kalmanVelocity = Math.sqrt(kalmanResult.vx ** 2 + kalmanResult.vy ** 2);
-      this.filterX.setDynamicParams(kalmanVelocity);
-      this.filterY.setDynamicParams(kalmanVelocity);
-    }
+    // One Euro Filter uygula — pipeline'daki TEK smoothing katmanı
+    const finalX = this.filterX.filter(correctedX, now);
+    const finalY = this.filterY.filter(correctedY, now);
 
     // Geçmişe ekle
     this.predictionHistory.push({ x: finalX, y: finalY, t: now });
@@ -850,9 +859,6 @@ export class GazeModel {
     this.driftOffsetY = 0;
     this.affineCorrection = null;
     this.predictionHistory = [];
-    if (this.kalmanFilter) {
-      this.kalmanFilter.reset();
-    }
   }
   
   /**
@@ -970,10 +976,9 @@ export class GazeModel {
 
     const screenCenterX = targetsX.reduce((s, v) => s + v, 0) / targetsX.length;
     const screenCenterY = targetsY.reduce((s, v) => s + v, 0) / targetsY.length;
-    const screenDiag = Math.sqrt(
-      Math.max(...targetsX.map(x => (x - screenCenterX) ** 2)) +
-      Math.max(...targetsY.map(y => (y - screenCenterY) ** 2))
-    ) || 1;
+    const maxDx = Math.max(...targetsX.map(x => Math.abs(x - screenCenterX)));
+    const maxDy = Math.max(...targetsY.map(y => Math.abs(y - screenCenterY)));
+    const screenDiag = Math.sqrt(maxDx ** 2 + maxDy ** 2) || 1;
 
     const sampleWeights = cleanSamples.map((s) => {
       const confWeight = Math.max(0.15, s.features.confidence);
