@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase-server";
 
-export async function PATCH(
+async function handleUpdate(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
@@ -37,4 +37,20 @@ export async function PATCH(
   } catch {
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
+}
+
+// PATCH for normal updates
+export async function PATCH(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  return handleUpdate(request, context);
+}
+
+// POST for sendBeacon (abandoned sessions) — sendBeacon always sends POST
+export async function POST(
+  request: NextRequest,
+  context: { params: Promise<{ id: string }> }
+) {
+  return handleUpdate(request, context);
 }
