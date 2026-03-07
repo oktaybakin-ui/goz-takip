@@ -221,7 +221,17 @@ export default function Calibration({
           ? allErrors.reduce((s, e) => s + e, 0) / allErrors.length
           : 999;
 
-        logger.log("[Calibration] Doğrulama tamamlandı, ortalama hata:", Math.round(meanError), "px,", affinePointsRef.current.length, "afin nokta");
+        // Sorun #29: Hata dağılımı detayları
+        const sortedErrors = [...allErrors].sort((a, b) => a - b);
+        const stdDev = allErrors.length > 1
+          ? Math.sqrt(allErrors.reduce((s, e) => s + (e - meanError) ** 2, 0) / (allErrors.length - 1))
+          : 0;
+        const p95 = sortedErrors.length > 0 ? sortedErrors[Math.floor(sortedErrors.length * 0.95)] : 0;
+        logger.log("[Calibration] Doğrulama tamamlandı:",
+          "ortalama:", Math.round(meanError), "px,",
+          "std:", Math.round(stdDev), "px,",
+          "95th percentile:", Math.round(p95), "px,",
+          affinePointsRef.current.length, "afin nokta");
         manager.completeValidation(meanError, undefined, undefined, affinePointsRef.current);
       }
     };

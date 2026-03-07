@@ -84,18 +84,34 @@ function screenToImageCoords(
   return { x, y };
 }
 
-/** Export için yumuşak geçiş: 3 noktalı hareketli ortalama (x,y). */
+/**
+ * Export için Savitzky-Golay benzeri yumuşatma: 5 noktalı pencere (Sorun #25).
+ * 3 noktalı basit ortalama yerine 5 noktalı ağırlıklı ortalama — daha az faz kayması.
+ * Ağırlıklar: [-3, 12, 17, 12, -3] / 35 (SG 2. derece, 5 nokta katsayıları)
+ */
 function smoothGazePointsForExport<T extends { x: number; y: number; timestamp: number; confidence: number }>(
   points: T[]
 ): { x: number; y: number; timestamp_ms: number; confidence: number; dt_ms: number }[] {
   if (points.length === 0) return [];
-  const w = 0.25; // önceki/sonraki ağırlık
+  // SG katsayıları (normalize)
+  const sgWeights = [-3, 12, 17, 12, -3];
+  const sgSum = 35;
+  const halfWin = 2;
   return points.map((p, i) => {
-    const prev = points[Math.max(0, i - 1)];
-    const next = points[Math.min(points.length - 1, i + 1)];
-    const x = i === 0 ? p.x : i === points.length - 1 ? p.x : w * prev.x + (1 - 2 * w) * p.x + w * next.x;
-    const y = i === 0 ? p.y : i === points.length - 1 ? p.y : w * prev.y + (1 - 2 * w) * p.y + w * next.y;
-    const dt_ms = i === 0 ? 0 : Math.round(p.timestamp - prev.timestamp);
+    let x = p.x;
+    let y = p.y;
+    // Kenar noktalarında pencere daraltılır
+    if (i >= halfWin && i < points.length - halfWin) {
+      let sx = 0, sy = 0;
+      for (let k = -halfWin; k <= halfWin; k++) {
+        const w = sgWeights[k + halfWin];
+        sx += points[i + k].x * w;
+        sy += points[i + k].y * w;
+      }
+      x = sx / sgSum;
+      y = sy / sgSum;
+    }
+    const dt_ms = i === 0 ? 0 : Math.round(p.timestamp - points[i - 1].timestamp);
     return {
       x: Math.round(x),
       y: Math.round(y),
@@ -140,13 +156,17 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const imageNatDimsRef = useRef(imageNaturalDimensions);
   imageNatDimsRef.current = imageNaturalDimensions;
 
+  // Sorun #28: Multi-model entegrasyon öncelik sırası:
+  // 1. Ensemble (birden fazla model ağırlıklı ortalaması) — en iyi doğruluk
+  // 2. Ensemble başarısız olursa → tekli GazeModel fallback
+  // 3. AutoRecalibration: fixation ve click verisiyle modeli sürekli ince ayar yapar
   const modelRef = useRef<GazeModel>(null as unknown as GazeModel);
   if (!modelRef.current) modelRef.current = new GazeModel(0.005);
   const ensembleRef = useRef<MultiModelEnsemble>(null as unknown as MultiModelEnsemble);
   if (!ensembleRef.current) ensembleRef.current = new MultiModelEnsemble();
   const autoRecalRef = useRef<AutoRecalibration>(null as unknown as AutoRecalibration);
   if (!autoRecalRef.current) autoRecalRef.current = new AutoRecalibration();
-  const useEnsemble = useRef(true); // Multi-model ensemble kullan
+  const useEnsemble = useRef(true);
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
@@ -188,12 +208,15 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     }
   }, [imageCount]);
 
-  // Tüm görüntüleri önceden yükle (data URL'ler büyük olabilir - ref'te tut, cleanup'ta temizle)
+  // Sorun #26: Lazy preload — ilk 3 görüntüyü hemen, geri kalanını tracking başladığında yükle
   const preloadImagesRef = useRef<HTMLImageElement[]>([]);
   useEffect(() => {
-    const imgs = imageUrls.map((url) => {
+    const maxEagerPreload = 3; // İlk 3 hemen, geri kalanı lazy
+    const imgs = imageUrls.map((url, i) => {
       const img = new Image();
-      img.src = url;
+      if (i < maxEagerPreload) {
+        img.src = url;
+      }
       return img;
     });
     preloadImagesRef.current = imgs;
@@ -202,6 +225,17 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       preloadImagesRef.current = [];
     };
   }, [imageUrls]);
+
+  // Tracking başladığında kalan görüntüleri lazy yükle
+  useEffect(() => {
+    if (phase === "tracking") {
+      preloadImagesRef.current.forEach((img, i) => {
+        if (i >= 3 && !img.src) {
+          img.src = imageUrls[i];
+        }
+      });
+    }
+  }, [phase, imageUrls]);
 
   // Görüntüyü yükle (mevcut indekse göre)
   useEffect(() => {

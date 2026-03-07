@@ -91,13 +91,13 @@ export function generateCalibrationPoints(
   return points;
 }
 
-/** Grid boyutuna göre adaptif minimum örnek sayısı */
+/** Grid boyutuna göre adaptif minimum örnek sayısı (Sorun #3: artırıldı) */
 export function getMinSamplesPerPoint(gridSize: GridSize): number {
   switch (gridSize) {
-    case "5x5": return 40;  // Çok nokta → her noktada daha az örnek yeterli
-    case "4x4": return 55;  // Varsayılan
-    case "3x3": return 65;  // Az nokta → her noktada daha çok örnek gerekli
-    default: return 55;
+    case "5x5": return 55;  // Çok nokta → her noktada biraz daha az yeterli
+    case "4x4": return 75;  // Varsayılan — 55→75 artırıldı
+    case "3x3": return 90;  // Az nokta → her noktada daha çok örnek gerekli
+    default: return 75;
   }
 }
 
@@ -209,9 +209,10 @@ export class CalibrationManager {
   private currentPointFrameCount: number = 0;
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
-  private readonly IRIS_BUFFER_SIZE = 8;   // Kompakt ama yeterli
-  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.060 : 0.028;   // Mobilde iris daha gürültülü
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 25 : 55;        // Mobilde daha az örnek yeterli
+  // Sorun #3: Stabilite penceresi 8→15 frame (~500ms @30fps, micro-saccade filtreleme için yeterli)
+  private readonly IRIS_BUFFER_SIZE = 15;
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.055 : 0.025;   // Biraz sıkılaştırıldı
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 40 : 75;        // Sorun #3: artırıldı
   private gridSize: GridSize | undefined = undefined;
   private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.45; // Mobilde kamera kalitesi düşük
   private readonly RETRY_QUALITY_THRESHOLD = 30; // 55 örnek hedefinde 30 altı → retry
@@ -219,7 +220,10 @@ export class CalibrationManager {
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();
   private readonly MAX_RETRIES_PER_POINT = 2;
-  
+  // Sorun #27: Global retry limiti — sonsuz retry döngüsünü önler
+  private totalRetryCount: number = 0;
+  private readonly MAX_TOTAL_RETRIES = 8;
+
   // Bölgesel kalite haritası (ekranın hangi bölgelerinde hata yüksek)
   private regionErrors: Map<string, number[]> = new Map();
 
@@ -259,8 +263,12 @@ export class CalibrationManager {
     return this.state;
   }
 
-  /** Grid boyutunu ayarla (kalibrasyon başlatılmadan önce) */
+  /** Grid boyutunu ayarla (kalibrasyon başlatılmadan önce) (Sorun #12: durum kontrolü) */
   setGridSize(size: GridSize): void {
+    if (this.state.phase !== "idle" && this.state.phase !== "instructions") {
+      logger.warn("[Calibration] Grid boyutu kalibrasyon başladıktan sonra değiştirilemez!");
+      return;
+    }
     this.gridSize = size;
     this.MIN_SAMPLES_PER_POINT = getMinSamplesPerPoint(size);
   }
@@ -388,7 +396,9 @@ export class CalibrationManager {
     this.recentIrisBuffer = [];
 
     if (nextIndex >= this.calibrationPoints.length) {
-      if (this.retryQueue.length > 0) {
+      // Sorun #27: Global retry limiti kontrolü
+      if (this.retryQueue.length > 0 && this.totalRetryCount < this.MAX_TOTAL_RETRIES) {
+        this.totalRetryCount++;
         const retryIdx = this.retryQueue.shift()!;
         const retryPoint = this.calibrationPoints[retryIdx];
         logger.log("[Calibration] Retry: nokta", retryPoint.id, "(kalan retry:", this.retryQueue.length, ")");
@@ -530,6 +540,7 @@ export class CalibrationManager {
     this.retryQueue = [];
     this.retryAttempts.clear();
     this.pointQuality.clear();
+    this.totalRetryCount = 0;
     this.onStateChange?.(this.state);
   }
 

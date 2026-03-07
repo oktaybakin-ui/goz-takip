@@ -148,6 +148,12 @@ export class HeatmapGenerator {
     this.colorize(ctx, blurredCtx, imageWidth, imageHeight);
   }
 
+  /**
+   * Sorun #11: "lighter" composite yerine "screen" kullanılıyor.
+   * "lighter" 255'te doyuyor ve >30 fixation'da kontrast kaybına neden oluyordu.
+   * "screen" formülü: result = 1 - (1-a)*(1-b), daha iyi dinamik aralık sağlar.
+   * Ek olarak alpha değerleri düşürüldü — doyma riski azaltıldı.
+   */
   private renderFixationHeatmap(
     ctx: CanvasRenderingContext2D,
     fixations: Fixation[]
@@ -157,36 +163,36 @@ export class HeatmapGenerator {
     const maxDuration = Math.max(...fixations.map((f) => f.duration), 1);
     const radius = this.config.radius;
 
-    ctx.globalCompositeOperation = "lighter";
+    // "screen" composite operation — lighter'a göre doyma problemi çok daha az
+    ctx.globalCompositeOperation = "screen";
+
+    // Fixation sayısına göre alpha ölçeklendirme: çok fixation → düşük alpha per fixation
+    const fixCountScale = Math.max(0.3, 1.0 - (fixations.length - 10) * 0.015);
 
     for (const fixation of fixations) {
       const weight = fixation.duration / maxDuration;
-
-      // Süreye göre radius ölçekle - ama minimum büyüklük koru
       const r = radius * (0.6 + weight * 0.8);
 
-      // Birden fazla katman çiz - daha yoğun merkez
-      for (let layer = 0; layer < 3; layer++) {
-        const layerR = r * (1 - layer * 0.25);
-        const layerAlpha = Math.min(1, (weight * 0.5 + 0.15) * (1 + layer * 0.3));
+      // Tek katman — daha temiz birikim, daha az doyma
+      const baseAlpha = Math.min(0.7, (weight * 0.4 + 0.1) * fixCountScale);
 
-        const gradient = ctx.createRadialGradient(
-          fixation.x, fixation.y, 0,
-          fixation.x, fixation.y, layerR
-        );
+      const gradient = ctx.createRadialGradient(
+        fixation.x, fixation.y, 0,
+        fixation.x, fixation.y, r
+      );
 
-        gradient.addColorStop(0, `rgba(0, 0, 0, ${layerAlpha})`);
-        gradient.addColorStop(0.5, `rgba(0, 0, 0, ${layerAlpha * 0.5})`);
-        gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
+      gradient.addColorStop(0, `rgba(0, 0, 0, ${baseAlpha})`);
+      gradient.addColorStop(0.4, `rgba(0, 0, 0, ${baseAlpha * 0.55})`);
+      gradient.addColorStop(0.7, `rgba(0, 0, 0, ${baseAlpha * 0.2})`);
+      gradient.addColorStop(1, "rgba(0, 0, 0, 0)");
 
-        ctx.fillStyle = gradient;
-        ctx.fillRect(
-          fixation.x - layerR,
-          fixation.y - layerR,
-          layerR * 2,
-          layerR * 2
-        );
-      }
+      ctx.fillStyle = gradient;
+      ctx.fillRect(
+        fixation.x - r,
+        fixation.y - r,
+        r * 2,
+        r * 2
+      );
     }
   }
 
@@ -196,7 +202,7 @@ export class HeatmapGenerator {
   ): void {
     const radius = this.config.radius * 0.7;
 
-    ctx.globalCompositeOperation = "lighter";
+    ctx.globalCompositeOperation = "screen";
 
     // Çok fazla nokta varsa aralıklı çiz (performans)
     const step = points.length > 1000 ? Math.floor(points.length / 1000) : 1;
@@ -389,8 +395,11 @@ export class HeatmapGenerator {
         outputImageData.data.set(result.outputData);
         ctx.putImageData(outputImageData, 0, 0);
         return;
-      } catch {
-        // Worker başarısız olursa sync fallback
+      } catch (err) {
+        // Sorun #24: Worker hata detayları loglansın
+        if (typeof console !== "undefined") {
+          console.warn("[HeatmapGenerator] Colorize worker başarısız, sync fallback kullanılıyor:", err);
+        }
       }
     }
 

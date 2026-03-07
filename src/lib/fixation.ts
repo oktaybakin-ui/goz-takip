@@ -89,8 +89,9 @@ export class FixationDetector {
   private dbscanEps: number;
   private dbscanMinPts: number;
 
-  // Gaze verileri
+  // Gaze verileri — circular buffer ile bellek sınırlı
   private gazePoints: GazePoint[] = [];
+  private readonly MAX_GAZE_POINTS = 2000; // ~66sn @30fps, 10 görüntü için yeterli
   private fixations: Fixation[] = [];
   private saccades: Saccade[] = [];
   private trackingStartTime: number = 0;
@@ -103,8 +104,8 @@ export class FixationDetector {
   private readonly POST_BLINK_REJECT = 2; // Göz kırpma sonrası atlanacak frame sayısı
   private postBlinkCounter: number = 0;
 
-  // Kayan pencere hız hesabı için son noktalar
-  private readonly VELOCITY_WINDOW = 3;
+  // Kayan pencere hız hesabı için son noktalar — 5 frame (daha kararlı hız tahmini)
+  private readonly VELOCITY_WINDOW = 5;
   private recentValidPoints: GazePoint[] = [];
 
   // Saccade peak velocity tracking
@@ -113,24 +114,37 @@ export class FixationDetector {
   private previousVelocity: number = 0;
   private previousTimestamp: number = 0;
 
+  /**
+   * @param velocityThreshold - I-VT hız eşiği (px/s). 0 verilirse ekran boyutundan otomatik hesaplanır.
+   * @param screenDiagonal - Ekran köşegeni (px). velocityThreshold=0 ise zorunlu.
+   */
   constructor(
-    velocityThreshold: number = 55,
+    velocityThreshold: number = 0,
     minFixationDuration: number = 100,
-    maxFixationRadius: number = 40,
-    dbscanEps: number = 35,
-    dbscanMinPts: number = 5,
+    maxFixationRadius: number = 0,
+    dbscanEps: number = 0,
+    dbscanMinPts: number = 3,
     mode: FixationMode = "ivt",
-    maxDispersion: number = 35,
+    maxDispersion: number = 0,
     idtMinDuration: number = 150,
-    maxAcceleration: number = 8000
+    maxAcceleration: number = 8000,
+    screenDiagonal: number = 0
   ) {
-    this.velocityThreshold = velocityThreshold;
+    // Ekran köşegenini otomatik hesapla
+    const diag = screenDiagonal > 0 ? screenDiagonal : (
+      typeof window !== "undefined"
+        ? Math.sqrt(window.innerWidth ** 2 + window.innerHeight ** 2)
+        : 2203 // 1920x1080 default
+    );
+
+    // Ekran boyutuna normalize edilmiş parametreler (Sorun #6, #18)
+    this.velocityThreshold = velocityThreshold > 0 ? velocityThreshold : diag * 0.03;
     this.minFixationDuration = minFixationDuration;
-    this.maxFixationRadius = maxFixationRadius;
-    this.dbscanEps = dbscanEps;
+    this.maxFixationRadius = maxFixationRadius > 0 ? maxFixationRadius : diag * 0.022;
+    this.dbscanEps = dbscanEps > 0 ? dbscanEps : diag * 0.02;
     this.dbscanMinPts = dbscanMinPts;
     this.mode = mode;
-    this.maxDispersion = maxDispersion;
+    this.maxDispersion = maxDispersion > 0 ? maxDispersion : diag * 0.02;
     this.idtMinDuration = idtMinDuration;
     this.maxAcceleration = maxAcceleration;
   }
@@ -156,7 +170,11 @@ export class FixationDetector {
    * @returns Tamamlanan fixation varsa onu döner, yoksa null
    */
   addGazePoint(point: GazePoint): Fixation | null {
+    // Circular buffer: bellek sınırlaması (Sorun #23)
     this.gazePoints.push(point);
+    if (this.gazePoints.length > this.MAX_GAZE_POINTS) {
+      this.gazePoints.splice(0, this.gazePoints.length - this.MAX_GAZE_POINTS);
+    }
 
     if (point.confidence < 0.3) return null;
 
@@ -309,6 +327,7 @@ export class FixationDetector {
    * I-DT (Dispersion Threshold) kontrolü:
    * Mevcut fixation penceresindeki tüm noktaların bounding box'ı maxDispersion'dan küçükse
    * VE süre idtMinDuration'dan uzunsa → fixation.
+   * Sorun #7 düzeltmesi: Artık düzgün dispersion+süre kontrolü yapılıyor.
    */
   private checkIDTFixation(newPoint: GazePoint): boolean {
     const pts = [...this.currentFixationPoints, newPoint];
@@ -327,18 +346,21 @@ export class FixationDetector {
     const dispersionY = maxY - minY;
     const dispersion = Math.max(dispersionX, dispersionY);
 
-    // Dispersion küçükse → fixation olabilir
+    // Dispersion çok büyükse → kesinlikle fixation değil
     if (dispersion > this.maxDispersion) {
-      return false; // Çok dağınık, fixation değil
+      return false;
     }
 
-    // Süre kontrolü (opsiyonel — yeterli süre varsa fixation)
+    // Dispersion düşük, ama süre minimum eşiğin altındaysa ve nokta sayısı
+    // yeterli bir pencere oluşturuyorsa → henüz karar verme (fixation potansiyel)
     const duration = newPoint.timestamp - pts[0].timestamp;
-    if (duration < this.idtMinDuration && pts.length > 3) {
-      // Süre kısa ama dispersion düşükse yine de fixation (noktalar birikiyor)
-      return true;
+    if (pts.length >= 4 && duration < this.idtMinDuration) {
+      // Kısa süre + düşük dispersion → muhtemelen fixation'ın başlangıcı
+      // Dispersion çok düşükse fixation kabul et, orta düzeyde bekle
+      return dispersion < this.maxDispersion * 0.5;
     }
 
+    // Yeterli süre + düşük dispersion → fixation
     return true;
   }
 

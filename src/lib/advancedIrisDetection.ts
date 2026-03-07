@@ -52,16 +52,35 @@ export class AdvancedIrisDetector {
     const eyeBounds = this.computeBoundingBox(eyeLandmarks);
     const eyeWidth = eyeBounds.maxX - eyeBounds.minX;
 
-    // Deterministik least-squares circle fit (RANSAC yerine — rastgelelik yok)
+    // Deterministik least-squares circle fit (Kåsa yöntemi — rastgelelik yok)
     const lsCircle = this.leastSquaresCircleFit(irisLandmarks);
 
-    // Centroid ve LS circle'ı birleştir (LS daha doğru ama centroid daha kararlı)
+    // Sorun #1: Circle fit kalite validasyonu — RMSE eşiği ile düşük kaliteyi reddet
+    // Fitness <0.3 ise circle fit güvenilmez, centroid'e daha çok ağırlık ver
     let combinedCenter: { x: number; y: number };
     if (lsCircle) {
-      combinedCenter = {
-        x: basicCenter.x * 0.3 + lsCircle.x * 0.7,
-        y: basicCenter.y * 0.3 + lsCircle.y * 0.7
-      };
+      // Circle fit kalitesine göre ağırlık ayarla
+      const fitQuality = Math.max(0, Math.min(1, lsCircle.fitness));
+      // Yüksek fitness → LS ağırlığı yüksek, düşük fitness → centroid ağırlığı yüksek
+      const lsWeight = fitQuality > 0.5 ? 0.75 : fitQuality > 0.3 ? 0.5 : 0.2;
+      const centroidWeight = 1 - lsWeight;
+
+      // Circle merkezi göz sınırları dışındaysa reddet
+      const centerInBounds =
+        lsCircle.x >= eyeBounds.minX - eyeWidth * 0.2 &&
+        lsCircle.x <= eyeBounds.maxX + eyeWidth * 0.2 &&
+        lsCircle.y >= eyeBounds.minY - eyeWidth * 0.2 &&
+        lsCircle.y <= eyeBounds.maxY + eyeWidth * 0.2;
+
+      if (centerInBounds && fitQuality > 0.15) {
+        combinedCenter = {
+          x: basicCenter.x * centroidWeight + lsCircle.x * lsWeight,
+          y: basicCenter.y * centroidWeight + lsCircle.y * lsWeight
+        };
+      } else {
+        // Circle fit güvenilmez — sadece centroid kullan
+        combinedCenter = basicCenter;
+      }
     } else {
       combinedCenter = basicCenter;
     }

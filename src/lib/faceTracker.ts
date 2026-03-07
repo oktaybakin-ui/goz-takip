@@ -498,6 +498,10 @@ export class FaceTracker {
 
     let landmarks: FaceLandmark[] = results.multiFaceLandmarks[0];
 
+    // Sorun #22: Zoom crop koordinat dönüşümü düzeltildi.
+    // lm.x/y 0-1 aralığında MediaPipe normalize koordinatları.
+    // Zoom canvas cropBounds bölgesini tam canvas'a yaydı, yani
+    // lm.x=0 → cropBounds.x, lm.x=1 → cropBounds.x + cropBounds.w
     if (this.currentCropBounds) {
       const { x: cx, y: cy, w: cw, h: ch } = this.currentCropBounds;
       landmarks = landmarks.map((lm) => ({
@@ -609,22 +613,27 @@ export class FaceTracker {
     let confidence = 1.0;
     const mobile = isMobileDevice();
 
-    // Göz açıklığı faktörü (EAR): tamamen kapalı=0, normal açık=1
+    // Sorun #9: Tutarlı EAR eşikleri — gazeModel.ts ile senkronize
     // Mobilde kamera açısı ve çözünürlük nedeniyle EAR değerleri daha düşük algılanıyor
-    const eyeOpennessThresh = mobile ? 0.08 : 0.15;
+    const eyeOpennessThresh = mobile ? 0.10 : 0.15;
     if (eyeOpenness < eyeOpennessThresh) {
       confidence *= Math.max(0, eyeOpenness / eyeOpennessThresh);
     }
 
-    // Yüz boyutu faktörü: çok küçük yüz = düşük güven
-    // Mobilde telefon daha yakın tutulduğu için yüz genelde büyük, ama bazı cihazlarda küçük olabilir
-    const minFaceScale = mobile ? 0.04 : 0.08;
+    // Sorun #10: Yüz boyutu faktörü — mobil eşik kalibre edildi
+    const minFaceScale = mobile ? 0.06 : 0.08;
     if (faceScale < minFaceScale) {
       confidence *= Math.max(0.1, faceScale / minFaceScale);
     }
 
     // İris tespit edilemedi
     if (leftIris.x === 0 && leftIris.y === 0) confidence = 0;
+
+    // Sorun #30: Temel occlusion tespiti — iris merkezi göz konturu dışındaysa güven düşür
+    // Pupil radius çok küçükse iris kısmen örtülü olabilir (göz kapağı, saç, gözlük)
+    if (pupilRadius > 0 && pupilRadius < 0.004) {
+      confidence *= 0.5; // Çok küçük pupil = iris kısmen örtülü
+    }
 
     // İris göreceli pozisyon aşırı uç ise güven düşür — mobilde daha toleranslı
     const irisLo = mobile ? -0.5 : -0.3;
@@ -634,12 +643,12 @@ export class FaceTracker {
     confidence *= Math.min(irisRange(leftRel.x), irisRange(rightRel.x));
     confidence *= Math.min(irisRange(leftRel.y), irisRange(rightRel.y));
 
-    // Sol-sağ iris tutarsızlığı: baş yana dönükse tolerans artır — mobilde daha toleranslı
+    // Sorun #14: Sol-sağ iris tutarsızlığı — mobil/masaüstü eşikler yakınlaştırıldı
     const irisAsymX = Math.abs(leftRel.x - rightRel.x);
     const irisAsymY = Math.abs(leftRel.y - rightRel.y);
     const asymTolerance = Math.min(Math.abs(headPose.yaw) * 1.5, 0.25);
-    const asymBaseX = mobile ? 0.45 : 0.3;
-    const asymBaseY = mobile ? 0.45 : 0.3;
+    const asymBaseX = mobile ? 0.38 : 0.30;
+    const asymBaseY = mobile ? 0.38 : 0.30;
     const asymThreshX = asymBaseX + asymTolerance;
     const asymThreshY = asymBaseY + asymTolerance * 0.5;
     if (irisAsymX > asymThreshX) confidence *= Math.max(0.3, 1 - (irisAsymX - asymThreshX) * 2);
@@ -965,9 +974,14 @@ export class FaceTracker {
    * Kalibrasyon öncesi manuel göz bebeği hizalama sonrası offset (normalize 0-1).
    * Sol/sağ iris tespitine eklenecek: corrected = detected + offset.
    */
+  /** Sorun #8: Offset'ler ±0.15'e kısıtlanıyor (mantıksız değerleri engeller) */
   setIrisOffset(left: { x: number; y: number }, right: { x: number; y: number }): void {
-    this.irisOffsetLeft = { x: left.x, y: left.y };
-    this.irisOffsetRight = { x: right.x, y: right.y };
+    const clamp = (v: number) => Math.max(-0.15, Math.min(0.15, v));
+    this.irisOffsetLeft = { x: clamp(left.x), y: clamp(left.y) };
+    this.irisOffsetRight = { x: clamp(right.x), y: clamp(right.y) };
+    if (Math.abs(left.x) > 0.15 || Math.abs(left.y) > 0.15 || Math.abs(right.x) > 0.15 || Math.abs(right.y) > 0.15) {
+      logger.warn("[FaceTracker] Iris offset ±0.15 sınırına kısıtlandı. Orijinal:", { left, right });
+    }
   }
 
   clearIrisOffset(): void {

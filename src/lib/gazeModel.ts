@@ -258,13 +258,17 @@ export class OneEuroFilter {
     this.dCutoff = dCutoff;
   }
   
-  // Hareket hızına göre parametreleri dinamik ayarla
-  setDynamicParams(velocity: number): void {
-    // Hız arttıkça minCutoff artır (daha az smoothing → saccade gecikmesi azalır)
-    // Sabitken daha fazla smoothing → jitter azalır
+  /**
+   * Hareket hızına ve güven skoruna göre parametreleri dinamik ayarla (Sorun #4).
+   * Confidence düşükse daha fazla smoothing, yüksekse sinyale güven.
+   */
+  setDynamicParams(velocity: number, confidence: number = 1.0): void {
     const speedFactor = Math.min(velocity / 500, 1.0);
-    this.minCutoff = 1.2 + speedFactor * 4.0; // 1.2 - 5.2 arası (fixation: 1.2, saccade: 5.2)
-    this.beta = 0.01 + speedFactor * 0.08; // 0.01 - 0.09 arası
+    // Confidence-weighted: düşük güven = daha fazla smoothing (düşük cutoff)
+    const confFactor = Math.max(0.3, Math.min(1.0, confidence));
+    // Fixation: 0.8Hz (güçlü smoothing), Saccade: 6Hz (hızlı takip)
+    this.minCutoff = (0.8 + speedFactor * 5.2) * confFactor;
+    this.beta = (0.008 + speedFactor * 0.09) * confFactor;
   }
 
   private alpha(cutoff: number, dt: number): number {
@@ -520,13 +524,14 @@ export class GazeModel {
       const dist = Math.sqrt(
         (s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2
       );
-      const spatialWeight = 1 + 0.6 * (dist / screenDiag);
+      // Sorun #19: Kenar ağırlığı azaltıldı (0.6→0.35) — overfitting riski düşürülüyor
+      const spatialWeight = 1 + 0.35 * (dist / screenDiag);
       return confWeight * spatialWeight;
     });
 
     // Leave-one-group-out CV ile en iyi lambda seç
     // Rastgele fold yerine kalibrasyon noktası bazlı fold → veri sızması yok, daha güvenilir
-    const lambdaCandidates = [0.0005, 0.001, 0.002, 0.004, 0.008, 0.015, 0.02, 0.05, 0.1];
+    const lambdaCandidates = [0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.012, 0.02, 0.035, 0.05, 0.08, 0.1, 0.15, 0.25];
     let bestLambda = this.lambda;
     let bestCV = Infinity;
 
@@ -698,20 +703,21 @@ export class GazeModel {
    */
   predict(features: EyeFeatures): GazePoint | null {
     // Blink detection: BlinkDetector varsa onun kararını kullan, yoksa EAR fallback
+    // Sorun #15: Tutarlı EAR eşiği — tüm modülde aynı değer
     if (features.isBlinking === true) {
       return null;
     }
     const avgEAR = (features.leftEAR + features.rightEAR) / 2;
-    if (features.isBlinking === undefined && avgEAR < 0.18) {
-      // Fallback: BlinkDetector entegre değilse eski EAR kontrolü
-      return null;
-    }
-    
-    // Confidence çok düşükse atla — mobilde eşik düşük (kamera kalitesi nedeniyle)
     const isMobile = typeof window !== "undefined" && (
       /Android|iPhone|iPad|iPod/i.test(navigator?.userAgent ?? "") ||
       (window.screen.width <= 768 && "ontouchstart" in window)
     );
+    const blinkEARThreshold = isMobile ? 0.12 : 0.18;
+    if (features.isBlinking === undefined && avgEAR < blinkEARThreshold) {
+      return null;
+    }
+
+    // Confidence çok düşükse atla — mobilde eşik düşük (kamera kalitesi nedeniyle)
     const minPredictConf = isMobile ? 0.05 : 0.15;
     if (features.confidence < minPredictConf) {
       return null;
@@ -723,20 +729,26 @@ export class GazeModel {
     const now = performance.now();
 
     // Hız hesapla (adaptive smoothing için)
+    // Sorun #16: Zaman boşluklarını (blink, tracking loss) kontrol et
     let velocity = 0;
     if (this.predictionHistory.length > 0) {
       const last = this.predictionHistory[this.predictionHistory.length - 1];
       const dx = raw.x - last.x;
       const dy = raw.y - last.y;
       const dt = (now - last.t) / 1000; // saniye
-      if (dt > 0) {
-        velocity = Math.sqrt(dx * dx + dy * dy) / dt; // px/s
+      // 300ms'den uzun boşluk → blink/kayıp, velocity'yi sıfırla ve filtreyi resetle
+      if (dt > 0.3) {
+        velocity = 0;
+        this.filterX.reset();
+        this.filterY.reset();
+      } else if (dt > 0) {
+        velocity = Math.sqrt(dx * dx + dy * dy) / dt;
       }
     }
     
-    // Hareket hızına göre filter parametrelerini ayarla
-    this.filterX.setDynamicParams(velocity);
-    this.filterY.setDynamicParams(velocity);
+    // Hareket hızına ve güven skoruna göre filter parametrelerini ayarla (Sorun #4)
+    this.filterX.setDynamicParams(velocity, features.confidence);
+    this.filterY.setDynamicParams(velocity, features.confidence);
 
     // Affine veya drift correction uygula
     let correctedX: number;
@@ -754,23 +766,25 @@ export class GazeModel {
     // gaze_screen = gaze_eye_in_head + head_rotation_projected
     // Kalibrasyon sırasında eye-in-head öğrenilir; tracking sırasında
     // baş dönüşü farkı düzeltilir.
+    // Sorun #5: Sert kesme yerine smooth tapering fonksiyonu kullanılıyor.
     if (this.refPose) {
       const dYaw = features.yaw - this.refPose.yaw;
       const dPitch = features.pitch - this.refPose.pitch;
 
-      // Head rotation'ın ekrana yansımasını tahmin et (basit projeksiyon)
-      // Baş sağa dönünce gaze sola kayar, yukarı eğilince aşağı kayar
-      // Katsayılar empirik — ekran boyutuna bağlı normalizasyon
       const screenW = typeof window !== "undefined" ? window.innerWidth : 1920;
       const screenH = typeof window !== "undefined" ? window.innerHeight : 1080;
-      const headCompX = -dYaw * screenW * 0.35; // ~%35 ekran genişliği/radyan
+      const headCompX = -dYaw * screenW * 0.35;
       const headCompY = -dPitch * screenH * 0.30;
 
-      // Sadece küçük baş hareketlerinde düzelt (büyük dönüşlerde model extrapolation daha iyi)
-      if (Math.abs(dYaw) < 0.25 && Math.abs(dPitch) < 0.20) {
-        correctedX += headCompX;
-        correctedY += headCompY;
-      }
+      // Smooth tapering: küçük açılarda tam düzeltme, büyük açılarda yumuşak azalma
+      // sigmoid benzeri taper: 1→0 arası yumuşak geçiş (sert kesme yerine)
+      const yawLimit = 0.30; // radyan (~17°)
+      const pitchLimit = 0.25; // radyan (~14°)
+      const taperYaw = Math.max(0, 1 - (Math.abs(dYaw) / yawLimit) ** 2);
+      const taperPitch = Math.max(0, 1 - (Math.abs(dPitch) / pitchLimit) ** 2);
+
+      correctedX += headCompX * taperYaw;
+      correctedY += headCompY * taperPitch;
     }
 
     // Referans pozdan sapma büyükse confidence düşür (ekstrapolasyon güvensiz)
@@ -930,11 +944,17 @@ export class GazeModel {
     const wx = solveLinearSystem(AtA, AtBx);
     const wy = solveLinearSystem(AtA, AtBy);
 
-    // Sanity check: afin dönüşüm makul mi? (aşırı ölçek/döndürme yok)
+    // Sanity check: afin dönüşüm makul mi? (Sorun #7/affine: ölçek + döndürme açısı kontrolü)
     const scaleX = Math.sqrt(wx[0] * wx[0] + wx[1] * wx[1]);
     const scaleY = Math.sqrt(wy[0] * wy[0] + wy[1] * wy[1]);
-    if (scaleX < 0.5 || scaleX > 2 || scaleY < 0.5 || scaleY > 2) {
-      logger.warn("[GazeModel] Afin düzeltme aşırı ölçek tespit etti, sadece ötelemeye düşülüyor");
+    // Rotation angle: atan2 ile hesapla, ~15° üzeri döndürme anormal
+    const rotAngle = Math.abs(Math.atan2(wx[1], wx[0]));
+    const maxRotation = 0.26; // ~15 derece
+    // Condition number kontrolü (ill-conditioned matris tespiti)
+    const conditionOk = scaleX > 0.01 && scaleY > 0.01 && scaleX / scaleY < 4 && scaleY / scaleX < 4;
+    if (scaleX < 0.5 || scaleX > 2 || scaleY < 0.5 || scaleY > 2 || rotAngle > maxRotation || !conditionOk) {
+      logger.warn("[GazeModel] Afin düzeltme aşırı ölçek/döndürme tespit etti, sadece ötelemeye düşülüyor",
+        { scaleX: scaleX.toFixed(3), scaleY: scaleY.toFixed(3), rotAngle: (rotAngle * 180 / Math.PI).toFixed(1) + "°" });
       const mbx = points.reduce((s, p) => s + (p.trueX - p.predX), 0) / n;
       const mby = points.reduce((s, p) => s + (p.trueY - p.predY), 0) / n;
       this.setInitialDriftOffset(mbx, mby);
@@ -989,7 +1009,8 @@ export class GazeModel {
     const sampleWeights = cleanSamples.map((s) => {
       const confWeight = Math.max(0.15, s.features.confidence);
       const dist = Math.sqrt((s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2);
-      const spatialWeight = 1 + 0.6 * (dist / screenDiag);
+      // Sorun #19: Kenar ağırlığı azaltıldı (0.6→0.35) — overfitting riski düşürülüyor
+      const spatialWeight = 1 + 0.35 * (dist / screenDiag);
       return confWeight * spatialWeight;
     });
 
@@ -1011,7 +1032,7 @@ export class GazeModel {
     }
 
     try {
-      const lambdaCandidates = [0.0005, 0.001, 0.002, 0.004, 0.008, 0.015, 0.02, 0.05, 0.1];
+      const lambdaCandidates = [0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.012, 0.02, 0.035, 0.05, 0.08, 0.1, 0.15, 0.25];
 
       const input: TrainWorkerInput = {
         type: "train",
@@ -1031,7 +1052,7 @@ export class GazeModel {
         worker,
         input,
         [],
-        30000 // 30s timeout
+        45000 // 45s timeout — yavaş cihazlar için artırıldı (Sorun #21)
       );
 
       this.weightsX = result.weightsX;
@@ -1098,7 +1119,7 @@ export class GazeModel {
 
       return { meanError: totalError / finalSamples.length, maxError };
     } catch (err) {
-      logger.warn("[GazeModel] Worker başarısız, sync fallback:", err);
+      logger.warn("[GazeModel] Worker başarısız (timeout veya hata), sync fallback kullanılıyor:", err);
       return this.train(samples);
     } finally {
       worker.terminate();
@@ -1113,8 +1134,13 @@ export class GazeModel {
     return this.refPose;
   }
 
+  // Model format versiyonu — feature boyutu veya yapısı değişirse artırılır (Sorun #17)
+  private static readonly MODEL_VERSION = 2;
+
   exportModel(): string {
     return JSON.stringify({
+      version: GazeModel.MODEL_VERSION,
+      featureCount: this.weightsX?.length ?? 0,
       weightsX: this.weightsX,
       weightsY: this.weightsY,
       featureMeans: this.featureMeans,
@@ -1132,6 +1158,16 @@ export class GazeModel {
       const data = JSON.parse(json);
       if (!Array.isArray(data.weightsX) || !Array.isArray(data.weightsY)) {
         throw new Error("Invalid model data: missing weightsX/weightsY arrays");
+      }
+      // Versiyon kontrolü (Sorun #17): uyumsuz model yüklenmesini engelle
+      if (data.version !== undefined && data.version !== GazeModel.MODEL_VERSION) {
+        throw new Error(
+          `Model versiyon uyumsuzluğu: kayıtlı v${data.version}, beklenen v${GazeModel.MODEL_VERSION}. Yeniden kalibrasyon gerekli.`
+        );
+      }
+      // Feature boyutu kontrolü: weights boyutu uyumsuzsa reddet
+      if (data.featureCount !== undefined && data.featureCount !== data.weightsX.length) {
+        throw new Error("Model feature boyutu tutarsız. Yeniden kalibrasyon gerekli.");
       }
       this.weightsX = data.weightsX;
       this.weightsY = data.weightsY;
