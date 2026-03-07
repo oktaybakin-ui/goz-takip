@@ -26,7 +26,7 @@ const PREVIEW_TARGETS = [
   { x: 0.85, y: 0.85, label: "Sag Alt" },
 ];
 
-const TARGET_DURATION_MS = 2000;
+const TARGET_DURATION_MS = 2500;
 
 /**
  * Kalibrasyon sonrasi canli gaze onizleme + affine correction.
@@ -95,6 +95,19 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
     return () => clearInterval(timer);
   }, []);
 
+  // Son hedef tamamlandıktan 5 saniye sonra otomatik devam et
+  const autoConfirmRef = useRef<NodeJS.Timeout | null>(null);
+  useEffect(() => {
+    if (activeTarget >= PREVIEW_TARGETS.length - 1) {
+      autoConfirmRef.current = setTimeout(() => {
+        onConfirm(computeAffinePointsRef.current());
+      }, 5000);
+    }
+    return () => {
+      if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
+    };
+  }, [activeTarget, onConfirm]);
+
   // Affine noktalarını hesapla
   const computeAffinePoints = useCallback((): AffinePoint[] => {
     const points: AffinePoint[] = [];
@@ -114,11 +127,15 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
     return points;
   }, [screenW, screenH]);
 
+  const computeAffinePointsRef = useRef(computeAffinePoints);
+  computeAffinePointsRef.current = computeAffinePoints;
+
   const avgError = errors.length > 0
     ? Math.round(errors.reduce((s, e) => s + e, 0) / errors.length)
     : 0;
 
-  const allDone = activeTarget >= PREVIEW_TARGETS.length - 1 && errors.length >= PREVIEW_TARGETS.length;
+  // allDone: son hedefe ulaşıldığında yeterli — bazı kullanıcılarda tüm hedeflere error kaydedilemiyor
+  const allDone = activeTarget >= PREVIEW_TARGETS.length - 1;
   const quality = avgError <= 50 ? "Mukemmel" : avgError <= 80 ? "Iyi" : avgError <= 120 ? "Kabul Edilebilir" : "Dusuk";
   const qualityColor = avgError <= 50 ? "text-green-400" : avgError <= 80 ? "text-blue-400" : avgError <= 120 ? "text-yellow-400" : "text-red-400";
 
@@ -194,19 +211,26 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
         )}
 
         {allDone && (
-          <div className="flex gap-3 mt-2">
+          <div className="flex flex-col gap-2 mt-2">
             <button
-              onClick={onRetry}
-              className="flex-1 px-4 py-2.5 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 transition"
+              onClick={() => {
+                if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
+                onConfirm(computeAffinePoints());
+              }}
+              className="w-full px-6 py-3.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-500 transition shadow-lg text-base"
+            >
+              Analize Basla
+            </button>
+            <button
+              onClick={() => {
+                if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
+                onRetry();
+              }}
+              className="w-full px-4 py-2 bg-gray-700 text-gray-400 rounded-lg text-sm hover:bg-gray-600 transition"
             >
               Tekrar Kalibre Et
             </button>
-            <button
-              onClick={() => onConfirm(computeAffinePoints())}
-              className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-500 transition"
-            >
-              Devam Et
-            </button>
+            <p className="text-gray-600 text-xs">5 saniye icinde otomatik devam edilecek...</p>
           </div>
         )}
 
