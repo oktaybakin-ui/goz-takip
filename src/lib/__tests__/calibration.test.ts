@@ -7,14 +7,14 @@ import type { EyeFeatures } from "../gazeModel";
 
 describe("calibration", () => {
   describe("generateCalibrationPoints", () => {
-    it("returns 25 points for desktop default (5x5 grid)", () => {
+    it("returns 16 points for desktop default (4x4 grid)", () => {
       const points = generateCalibrationPoints(800, 600, 50);
-      expect(points).toHaveLength(25);
+      expect(points).toHaveLength(16);
       const ids = new Set<number>();
       points.forEach((p) => {
         expect(p).toHaveProperty("id");
         expect(p.id).toBeGreaterThanOrEqual(0);
-        expect(p.id).toBeLessThan(25);
+        expect(p.id).toBeLessThan(16);
         ids.add(p.id);
         expect(p).toHaveProperty("x");
         expect(p).toHaveProperty("y");
@@ -23,7 +23,7 @@ describe("calibration", () => {
         expect(typeof p.x).toBe("number");
         expect(typeof p.y).toBe("number");
       });
-      expect(ids.size).toBe(25);
+      expect(ids.size).toBe(16);
     });
 
     it("returns 25 points when gridSize is 5x5", () => {

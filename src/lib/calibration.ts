@@ -1,11 +1,10 @@
 /**
  * Kalibrasyon Modülü
  *
- * 25 noktalı (5×5) kalibrasyon + 5 doğrulama noktası:
+ * 16 noktalı (4×4) kalibrasyon + birleşik önizleme/doğrulama:
  * - Noktalar TAM EKRAN (viewport) üzerinde yayılır
  * - Stabilite kontrolü (baş hareketi, yüz tespiti, göz durumu)
- * - Doğrulama testi
- * - Hata hesaplama
+ * - Doğrulama GazePreview ile birleştirildi (~60s toplam akış)
  *
  * NOT: Model ekran koordinatlarıyla eğitilir.
  * Tracking sırasında tahminler görüntü koordinatlarına dönüştürülür.
@@ -73,8 +72,8 @@ export function generateCalibrationPoints(
     rows = r;
     cols = c;
   } else {
-    cols = mobile ? 3 : 5;  // Mobilde 3×3=9 nokta, masaüstünde 5×5=25
-    rows = mobile ? 3 : 5;
+    cols = mobile ? 3 : 4;  // Mobilde 3×3=9 nokta, masaüstünde 4×4=16
+    rows = mobile ? 3 : 4;
   }
 
   for (let row = 0; row < rows; row++) {
@@ -91,13 +90,13 @@ export function generateCalibrationPoints(
   return points;
 }
 
-/** Grid boyutuna göre adaptif minimum örnek sayısı (Sorun #3: artırıldı) */
+/** Grid boyutuna göre adaptif minimum örnek sayısı */
 export function getMinSamplesPerPoint(gridSize: GridSize): number {
   switch (gridSize) {
-    case "5x5": return 55;  // Çok nokta → her noktada biraz daha az yeterli
-    case "4x4": return 75;  // Varsayılan — 55→75 artırıldı
-    case "3x3": return 90;  // Az nokta → her noktada daha çok örnek gerekli
-    default: return 75;
+    case "5x5": return 25;
+    case "4x4": return 25;  // Varsayılan — agresif zamanlama
+    case "3x3": return 40;  // Az nokta → her noktada daha çok örnek gerekli
+    default: return 25;
   }
 }
 
@@ -209,13 +208,12 @@ export class CalibrationManager {
   private currentPointFrameCount: number = 0;
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
-  // Sorun #3: Stabilite penceresi 8→15 frame (~500ms @30fps, micro-saccade filtreleme için yeterli)
-  private readonly IRIS_BUFFER_SIZE = 15;
+  private readonly IRIS_BUFFER_SIZE = 8;
   private readonly IRIS_STD_MAX = isMobileDevice() ? 0.055 : 0.025;   // Biraz sıkılaştırıldı
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 40 : 55;        // 5x5 default: 25 nokta × 55 = 1375 örnek
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 25 : 25;        // 4x4 default: 16 nokta × 25 = 400 örnek
   private gridSize: GridSize | undefined = undefined;
   private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.45; // Mobilde kamera kalitesi düşük
-  private readonly RETRY_QUALITY_THRESHOLD = 30; // 55 örnek hedefinde 30 altı → retry
+  private readonly RETRY_QUALITY_THRESHOLD = 15; // 25 örnek hedefinde 15 altı → retry
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();
@@ -236,7 +234,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: this.gridSize ? parseInt(this.gridSize.split("x")[0]) ** 2 : (isMobileDevice() ? 9 : 25),
+      totalPoints: this.gridSize ? parseInt(this.gridSize.split("x")[0]) ** 2 : (isMobileDevice() ? 9 : 16),
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,
@@ -299,7 +297,7 @@ export class CalibrationManager {
   /** FPS bilgisini güncelle (kamera FPS'i) */
   setFPS(fps: number): void {
     this.detectedFPS = Math.max(15, Math.min(120, fps));
-    this.settleFrames = Math.round(this.detectedFPS * 2.0); // 1.5→2.0: göz tam sabitlenene kadar bekle
+    this.settleFrames = Math.round(this.detectedFPS * 0.5); // 1.5→2.0: göz tam sabitlenene kadar bekle
     logger.log("[Calibration] FPS:", this.detectedFPS, "| Settle frames:", this.settleFrames);
   }
 
@@ -309,11 +307,11 @@ export class CalibrationManager {
     this.retryQueue = [];
     this.retryAttempts.clear();
     if (this.settleFrames === 0) {
-      this.settleFrames = Math.round(this.detectedFPS * 2.0);
+      this.settleFrames = Math.round(this.detectedFPS * 0.5);
     }
     this.updateState({
       phase: "calibrating",
-      countdown: 3,
+      countdown: 1,
       message: "Şimdi bu noktaya bak 👁️",
       subMessage: "Başını sabit tut. Noktaya baktığında gözünü de sabit tut.",
     });
@@ -405,7 +403,7 @@ export class CalibrationManager {
         this.updateState({
           currentPointIndex: retryIdx,
           progress: 0,
-          countdown: 3,
+          countdown: 1,
           message: "Tekrar: bu noktaya bak 👁️",
           subMessage: "Bu nokta için daha fazla veri gerekli. Lütfen odaklan.",
           warning: null,
@@ -419,7 +417,7 @@ export class CalibrationManager {
     this.updateState({
       currentPointIndex: nextIndex,
       progress: 0,
-      countdown: 3,
+      countdown: 1,
       message: "Şimdi bu noktaya bak 👁️",
       subMessage: "Başını sabit tut. Noktaya baktığında gözünü de sabit tut.",
       warning: null,
@@ -459,12 +457,11 @@ export class CalibrationManager {
       logger.log("[Calibration] Model trained:", this.model.isTrained());
 
       this.updateState({
-        phase: "validating",
+        phase: "complete",
         currentPointIndex: 0,
-        progress: 0,
-        countdown: 3,
-        message: "Kalibrasyon tamamlandı. Şimdi doğrulama yapıyoruz.",
-        subMessage: "Doğrulama noktalarına bakın.",
+        progress: 100,
+        message: "Kalibrasyon tamamlandı.",
+        subMessage: `Ortalama hata: ${Math.round(result.meanError)} px`,
         meanError: result.meanError,
         maxError: result.maxError,
       });

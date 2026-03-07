@@ -13,7 +13,7 @@ import { FaceTracker } from "@/lib/faceTracker";
 import { logger } from "@/lib/logger";
 import { isMobileDevice } from "@/lib/deviceDetect";
 import { useLang } from "@/contexts/LangContext";
-import GazePreview from "./GazePreview";
+import GazePreview, { AffinePoint } from "./GazePreview";
 
 interface CalibrationProps {
   model: GazeModel;
@@ -81,7 +81,7 @@ export default function Calibration({
     setSampleProgress(0);
     samplingRef.current = false;
 
-    let count = 3;  // 3 saniye geri sayım — kullanıcı noktayı bulup odaklansın (2'den artırıldı)
+    let count = 1;  // 1 saniye geri sayım — agresif zamanlama (~60s toplam akış)
     setCountdown(count);
 
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
@@ -106,7 +106,7 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = isMobileDevice() ? 15000 : 10000; // Mobilde daha uzun timeout
+    const POINT_TIMEOUT_MS = isMobileDevice() ? 8000 : 5000; // Agresif zamanlama
     // Duplicate detection: rAF ~60fps ama faceTracker ~30fps, aynı features tekrar okunabilir
     let lastFeaturesRef: EyeFeatures | null = null;
 
@@ -120,12 +120,8 @@ export default function Calibration({
       if (hasMore) {
         startPointCollection(manager, false);
       } else {
-        logger.log("[Calibration] Kalibrasyon tamamlandı, doğrulama başlıyor");
-        phaseRef.current = "validating";
-        validationErrorsRef.current = [];
-        validationBiasesRef.current = [];
-        affinePointsRef.current = [];
-        startPointCollection(manager, true);
+        logger.log("[Calibration] Kalibrasyon tamamlandı, GazePreview'a geçiliyor");
+        // Doğrulama fazı kaldırıldı — GazePreview'da birleşik yapılacak
       }
     };
 
@@ -354,6 +350,14 @@ export default function Calibration({
     }
   }, [model, state?.meanError]);
 
+  // Model eğitimi bitince (phase=complete) otomatik GazePreview'a geç
+  useEffect(() => {
+    if (state?.phase === "complete" && !showGazePreview) {
+      handleSaveCalibration();
+      setShowGazePreview(true);
+    }
+  }, [state?.phase, showGazePreview, handleSaveCalibration]);
+
   // Tekrar et
   const handleRetry = useCallback(() => {
     const manager = managerRef.current;
@@ -375,7 +379,12 @@ export default function Calibration({
       <GazePreview
         model={model}
         faceTracker={faceTracker}
-        onConfirm={() => {
+        onConfirm={(affinePoints?: AffinePoint[]) => {
+          // Affine correction: GazePreview'dan gelen verilerle modeli düzelt
+          if (affinePoints && affinePoints.length >= 3) {
+            model.setAffineCorrection(affinePoints);
+            logger.log("[Calibration] Affine correction uygulandı:", affinePoints.length, "nokta");
+          }
           setShowGazePreview(false);
           handleComplete();
         }}
@@ -454,7 +463,7 @@ export default function Calibration({
       )}
 
       {/* Kalibrasyon / Doğrulama noktası gösterimi */}
-      {(state.phase === "calibrating" || state.phase === "validating") && !isTraining && currentPoint && (
+      {state.phase === "calibrating" && !isTraining && currentPoint && (
         <div className="fixed inset-0">
           {/* Kalibrasyon noktası */}
           <div
@@ -535,9 +544,7 @@ export default function Calibration({
           {/* Bilgi paneli */}
           <div className="fixed bottom-8 left-1/2 transform -translate-x-1/2 bg-gray-900/90 rounded-xl px-8 py-4 text-center max-w-md backdrop-blur z-40">
             <p className="text-white text-lg font-semibold mb-1">
-              {state.phase === "validating"
-                ? "Doğrulama - Bu noktaya bak 👁️"
-                : "Şimdi bu noktaya bak 👁️"}
+              Şimdi bu noktaya bak 👁️
             </p>
             <p className="text-gray-400 text-sm mb-3">
               Başını sabit tut. Sadece gözlerin hareket etsin.
@@ -555,9 +562,7 @@ export default function Calibration({
 
             {/* Nokta ilerleme */}
             <p className="text-gray-500 text-xs">
-              {state.phase === "calibrating"
-                ? `Nokta ${state.currentPointIndex + 1} / ${state.totalPoints}`
-                : `Doğrulama ${state.currentPointIndex + 1} / 9`}
+              {`Nokta ${state.currentPointIndex + 1} / ${state.totalPoints}`}
             </p>
 
             {/* Uyarı */}
@@ -567,18 +572,6 @@ export default function Calibration({
               </div>
             )}
             
-            {/* Validation atla butonu */}
-            {state.phase === "validating" && (
-              <button
-                onClick={() => {
-                  // Validation'ı atla ve direkt complete'e geç (varsayılan hata: 75px)
-                  managerRef.current?.completeValidation(75);
-                }}
-                className="mt-3 px-4 py-2 bg-gray-700 text-gray-300 rounded-lg text-sm hover:bg-gray-600 transition"
-              >
-                Doğrulamayı Atla →
-              </button>
-            )}
           </div>
         </div>
       )}

@@ -4,10 +4,17 @@ import React, { useState, useEffect, useRef, useCallback } from "react";
 import { GazeModel, GazePoint, EyeFeatures } from "@/lib/gazeModel";
 import { FaceTracker } from "@/lib/faceTracker";
 
+export interface AffinePoint {
+  predX: number;
+  predY: number;
+  trueX: number;
+  trueY: number;
+}
+
 interface GazePreviewProps {
   model: GazeModel;
   faceTracker: FaceTracker;
-  onConfirm: () => void;
+  onConfirm: (affinePoints?: AffinePoint[]) => void;
   onRetry: () => void;
 }
 
@@ -17,19 +24,20 @@ const PREVIEW_TARGETS = [
   { x: 0.50, y: 0.50, label: "Merkez" },
   { x: 0.15, y: 0.85, label: "Sol Alt" },
   { x: 0.85, y: 0.85, label: "Sag Alt" },
-  { x: 0.50, y: 0.25, label: "Ust Orta" },
 ];
 
+const TARGET_DURATION_MS = 2000;
+
 /**
- * Kalibrasyon sonrasi canli gaze onizleme.
- * Kullanici 6 noktaya bakiyor, ekranda bakis noktasi canli gosteriliyor.
- * Boylece kalibrasyon kalitesini gozuyle gorebiliyor.
+ * Kalibrasyon sonrasi canli gaze onizleme + affine correction.
+ * 5 noktada hem canlı bakış gösterilir hem affine düzeltme verisi toplanır.
  */
 export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: GazePreviewProps) {
   const [gazePos, setGazePos] = useState<{ x: number; y: number } | null>(null);
   const [activeTarget, setActiveTarget] = useState(0);
   const [errors, setErrors] = useState<number[]>([]);
   const animRef = useRef<number>(0);
+  const affineDataRef = useRef<Map<number, { predXs: number[]; predYs: number[] }>>(new Map());
   const screenW = typeof window !== "undefined" ? window.innerWidth : 1920;
   const screenH = typeof window !== "undefined" ? window.innerHeight : 1080;
 
@@ -40,20 +48,24 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
       if (prediction) {
         setGazePos({ x: prediction.x, y: prediction.y });
 
-        // Aktif hedefe olan hatayi hesapla
         const target = PREVIEW_TARGETS[activeTarget];
         if (target) {
           const tx = target.x * screenW;
           const ty = target.y * screenH;
           const dist = Math.sqrt((prediction.x - tx) ** 2 + (prediction.y - ty) ** 2);
-          // Stabil bakis → hata kaydet (kucuk hareket)
+
+          // Affine data toplama — tüm tahminleri kaydet
           if (dist < screenW * 0.3) {
+            const data = affineDataRef.current.get(activeTarget) || { predXs: [], predYs: [] };
+            data.predXs.push(prediction.x);
+            data.predYs.push(prediction.y);
+            affineDataRef.current.set(activeTarget, data);
+
             setErrors(prev => {
               const newErrors = [...prev];
               if (newErrors.length <= activeTarget) {
                 newErrors.push(dist);
               } else {
-                // EMA ile guncelle
                 newErrors[activeTarget] = newErrors[activeTarget] * 0.7 + dist * 0.3;
               }
               return newErrors;
@@ -72,16 +84,35 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
     };
   }, [gazeLoop]);
 
-  // Her 3 saniyede sonraki hedefe gec
+  // Her 2 saniyede sonraki hedefe gec
   useEffect(() => {
     const timer = setInterval(() => {
       setActiveTarget(prev => {
         if (prev >= PREVIEW_TARGETS.length - 1) return prev;
         return prev + 1;
       });
-    }, 3000);
+    }, TARGET_DURATION_MS);
     return () => clearInterval(timer);
   }, []);
+
+  // Affine noktalarını hesapla
+  const computeAffinePoints = useCallback((): AffinePoint[] => {
+    const points: AffinePoint[] = [];
+    affineDataRef.current.forEach((data, idx) => {
+      if (data.predXs.length > 0) {
+        const avgPredX = data.predXs.reduce((s, v) => s + v, 0) / data.predXs.length;
+        const avgPredY = data.predYs.reduce((s, v) => s + v, 0) / data.predYs.length;
+        const target = PREVIEW_TARGETS[idx];
+        points.push({
+          predX: avgPredX,
+          predY: avgPredY,
+          trueX: target.x * screenW,
+          trueY: target.y * screenH,
+        });
+      }
+    });
+    return points;
+  }, [screenW, screenH]);
 
   const avgError = errors.length > 0
     ? Math.round(errors.reduce((s, e) => s + e, 0) / errors.length)
@@ -171,7 +202,7 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
               Tekrar Kalibre Et
             </button>
             <button
-              onClick={onConfirm}
+              onClick={() => onConfirm(computeAffinePoints())}
               className="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-500 transition"
             >
               Devam Et
