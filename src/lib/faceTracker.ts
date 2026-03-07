@@ -90,6 +90,7 @@ export class FaceTracker {
   private isProcessingFrame: boolean = false;
   private onFeaturesCallback: ((features: EyeFeatures) => void) | null = null;
   private lastFeatures: EyeFeatures | null = null;
+  private lastLandmarks: FaceLandmark[] | null = null;
   private frameCount: number = 0;
   private fps: number = 0;
   private lastFpsTime: number = 0;
@@ -543,6 +544,7 @@ export class FaceTracker {
 
     const features = this.extractFeatures(landmarks);
     this.lastFeatures = features;
+    this.lastLandmarks = landmarks;
 
     if (this.onFeaturesCallback) {
       this.onFeaturesCallback(features);
@@ -948,6 +950,11 @@ export class FaceTracker {
 
   getLastFeatures(): EyeFeatures | null {
     return this.lastFeatures;
+  }
+
+  /** Son frame'deki 3D landmark'lar (gözlük tespiti vb. için) */
+  getLastLandmarks(): Array<{ x: number; y: number; z: number }> | null {
+    return this.lastLandmarks;
   }
 
   isActive(): boolean {

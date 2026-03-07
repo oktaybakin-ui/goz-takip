@@ -13,6 +13,7 @@ import { FaceTracker } from "@/lib/faceTracker";
 import { logger } from "@/lib/logger";
 import { isMobileDevice } from "@/lib/deviceDetect";
 import { useLang } from "@/contexts/LangContext";
+import GazePreview from "./GazePreview";
 
 interface CalibrationProps {
   model: GazeModel;
@@ -33,6 +34,7 @@ export default function Calibration({
   const [currentPoint, setCurrentPoint] = useState<CalibrationPoint | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
   const [isTraining, setIsTraining] = useState(false);
+  const [showGazePreview, setShowGazePreview] = useState(false);
 
   const managerRef = useRef<CalibrationManager | null>(null);
   const samplingRef = useRef(false);
@@ -367,6 +369,24 @@ export default function Calibration({
   // RENDER
   if (!state) return null;
 
+  // Canli gaze onizleme ekrani
+  if (showGazePreview) {
+    return (
+      <GazePreview
+        model={model}
+        faceTracker={faceTracker}
+        onConfirm={() => {
+          setShowGazePreview(false);
+          handleComplete();
+        }}
+        onRetry={() => {
+          setShowGazePreview(false);
+          handleRetry();
+        }}
+      />
+    );
+  }
+
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
       {/* Talimat ekranı — temiz, profesyonel */}
@@ -610,11 +630,11 @@ export default function Calibration({
               <button
                 onClick={() => {
                   handleSaveCalibration();
-                  handleComplete();
+                  setShowGazePreview(true);
                 }}
                 className="w-full px-8 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg text-base"
               >
-                Analize Başla
+                Dogruluğu Test Et
               </button>
 
               <button

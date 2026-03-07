@@ -73,8 +73,8 @@ export function generateCalibrationPoints(
     rows = r;
     cols = c;
   } else {
-    cols = mobile ? 3 : 4;  // Mobilde 3×3=9 nokta, masaüstünde 4×4=16
-    rows = mobile ? 3 : 4;
+    cols = mobile ? 3 : 5;  // Mobilde 3×3=9 nokta, masaüstünde 5×5=25
+    rows = mobile ? 3 : 5;
   }
 
   for (let row = 0; row < rows; row++) {
@@ -212,7 +212,7 @@ export class CalibrationManager {
   // Sorun #3: Stabilite penceresi 8→15 frame (~500ms @30fps, micro-saccade filtreleme için yeterli)
   private readonly IRIS_BUFFER_SIZE = 15;
   private readonly IRIS_STD_MAX = isMobileDevice() ? 0.055 : 0.025;   // Biraz sıkılaştırıldı
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 40 : 75;        // Sorun #3: artırıldı
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 40 : 55;        // 5x5 default: 25 nokta × 55 = 1375 örnek
   private gridSize: GridSize | undefined = undefined;
   private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.45; // Mobilde kamera kalitesi düşük
   private readonly RETRY_QUALITY_THRESHOLD = 30; // 55 örnek hedefinde 30 altı → retry
@@ -236,7 +236,7 @@ export class CalibrationManager {
     return {
       phase: "idle",
       currentPointIndex: 0,
-      totalPoints: this.gridSize ? parseInt(this.gridSize.split("x")[0]) ** 2 : (isMobileDevice() ? 9 : 16),
+      totalPoints: this.gridSize ? parseInt(this.gridSize.split("x")[0]) ** 2 : (isMobileDevice() ? 9 : 25),
       samples: [],
       samplesPerPoint: new Map(),
       progress: 0,

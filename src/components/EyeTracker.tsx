@@ -6,10 +6,12 @@ import { GazeModel, GazePoint, EyeFeatures } from "@/lib/gazeModel";
 import { FaceTracker } from "@/lib/faceTracker";
 import { FixationDetector, Fixation, FixationMetrics } from "@/lib/fixation";
 import { HeatmapGenerator } from "@/lib/heatmap";
+import { WebGLHeatmapRenderer } from "@/lib/webglHeatmap";
 import { MultiModelEnsemble } from "@/lib/multiModelEnsemble";
 import { AutoRecalibration } from "@/lib/autoRecalibration";
 import { BlinkDetector } from "@/lib/blinkDetector";
 import { isMobileDevice } from "@/lib/deviceDetect";
+import { GlassesDetector } from "@/lib/glassesDetector";
 import { logger } from "@/lib/logger";
 import { useLang } from "@/contexts/LangContext";
 import Calibration from "./Calibration";
@@ -139,8 +141,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   const [cameraStatus, setCameraStatus] = useState<string>("Bekleniyor...");
   const [resultsPerImage, setResultsPerImage] = useState<ResultPerImage[]>([]);
   const [showTransitionOverlay, setShowTransitionOverlay] = useState(false);
+  const [showDriftCorrection, setShowDriftCorrection] = useState(false);
   const transitionPhotoNumRef = useRef(0);
   const [resizeWarning, setResizeWarning] = useState(false);
+  const [glassesWarning, setGlassesWarning] = useState<string | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const calibratedScreenSize = useRef<{ w: number; h: number } | null>(null);
   const { t } = useLang();
@@ -180,6 +184,12 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
   );
   const heatmapRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
   if (!heatmapRef.current) heatmapRef.current = new HeatmapGenerator();
+  const webglHeatmapRef = useRef<WebGLHeatmapRenderer | null>(null);
+  if (!webglHeatmapRef.current && typeof window !== "undefined" && WebGLHeatmapRenderer.isSupported()) {
+    webglHeatmapRef.current = new WebGLHeatmapRenderer();
+  }
+  const glassesDetectorRef = useRef<GlassesDetector>(null as unknown as GlassesDetector);
+  if (!glassesDetectorRef.current) glassesDetectorRef.current = new GlassesDetector();
   const trackingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const autoRecalTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gazePointsRef = useRef<GazePoint[]>([]);
@@ -416,7 +426,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     setMetrics(null);
     // Süreyi ÖNCE sıfırla, sonra interval başlat (race condition önlenir)
     setTrackingDuration(0);
-    setShowTransitionOverlay(true);
+    setShowDriftCorrection(true);
     setCurrentImageIndex(idx + 1);
 
     // Interval'i state sıfırlandıktan sonra başlat
@@ -432,8 +442,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
 
   // Geçiş overlay ref'ini state ile senkronize et (tracking callback state okuyamaz)
   useEffect(() => {
-    showTransitionOverlayRef.current = showTransitionOverlay;
-  }, [showTransitionOverlay]);
+    showTransitionOverlayRef.current = showTransitionOverlay || showDriftCorrection;
+  }, [showTransitionOverlay, showDriftCorrection]);
 
   // Geçiş overlay'ini 1.2 saniye sonra kapat
   useEffect(() => {
@@ -1070,7 +1080,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
       }
       const img = new Image();
       img.onload = () => {
-        const dataUrl = heatmapRef.current.exportToPNG(
+        const renderer = webglHeatmapRef.current ?? heatmapRef.current;
+        const dataUrl = renderer.exportToPNG(
           result.gazePoints,
           result.fixations || [],
           img,
@@ -1095,7 +1106,8 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     const gazePoints = fixationDetectorRef.current.getGazePoints();
     const allFixations = fixationDetectorRef.current.getFixations();
 
-    const dataUrl = heatmapRef.current.exportToPNG(
+    const renderer = webglHeatmapRef.current ?? heatmapRef.current;
+    const dataUrl = renderer.exportToPNG(
       gazePoints,
       allFixations,
       imageRef.current,
@@ -1235,6 +1247,11 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
                   Pencere boyutu degisti
                 </span>
               )}
+              {glassesWarning && (
+                <span className="text-amber-300 text-xs" title={glassesWarning}>
+                  Gozluk algilandi
+                </span>
+              )}
               <button
                 onClick={isFullscreen ? exitFullscreen : requestFullscreen}
                 className="ml-auto text-gray-400 hover:text-white text-sm px-3 py-1 rounded-lg border border-gray-700 hover:border-gray-500 transition-colors min-h-[44px] min-w-[44px]"
@@ -1358,6 +1375,30 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         />
       )}
 
+      {/* Drift düzeltme overlay (multi-image geçişlerinde) */}
+      {showDriftCorrection && isMultiImage && (
+        <DriftCorrectionOverlay
+          model={modelRef.current}
+          faceTracker={faceTrackerRef.current}
+          photoNum={transitionPhotoNumRef.current + 1}
+          totalPhotos={imageCount}
+          onDone={() => {
+            setShowDriftCorrection(false);
+            setShowTransitionOverlay(true);
+          }}
+        />
+      )}
+
+      {/* Gerçek zamanlı kalite göstergesi + gözlük tespiti */}
+      {phase === "tracking" && (
+        <QualityIndicator
+          faceTracker={faceTrackerRef.current}
+          isTracking={isTracking}
+          glassesDetector={glassesDetectorRef.current}
+          onGlassesDetected={setGlassesWarning}
+        />
+      )}
+
       {/* Kamera önizleme */}
       {(phase === "tracking" || phase === "calibration") && (
         <div className="fixed bottom-4 right-4 w-24 h-[4.5rem] sm:w-40 sm:h-[7.5rem] rounded-lg overflow-hidden border-2 border-gray-600 shadow-lg bg-black z-40">
@@ -1367,6 +1408,195 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Gerçek zamanlı kalite göstergesi — tracking sırasında güven seviyesini gösterir.
+ * Renk kodları: yeşil=mükemmel, mavi=iyi, sarı=düşük, kırmızı=çok düşük
+ */
+function QualityIndicator({
+  faceTracker,
+  isTracking,
+  glassesDetector,
+  onGlassesDetected,
+}: {
+  faceTracker: FaceTracker;
+  isTracking: boolean;
+  glassesDetector: GlassesDetector;
+  onGlassesDetected: (msg: string | null) => void;
+}) {
+  const [quality, setQuality] = useState({ confidence: 0, fps: 0, status: "...", color: "gray" as string });
+  const historyRef = useRef<number[]>([]);
+  const glassesNotifiedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isTracking) return;
+    const interval = setInterval(() => {
+      const features = faceTracker.getLastFeatures();
+      const fps = faceTracker.getFPS();
+      const conf = features?.confidence ?? 0;
+
+      // Son 10 ölçümün ortalaması (anlık sıçramaları yumuşat)
+      historyRef.current.push(conf);
+      if (historyRef.current.length > 10) historyRef.current.shift();
+      const avgConf = historyRef.current.reduce((a, b) => a + b, 0) / historyRef.current.length;
+
+      let status: string;
+      let color: string;
+      if (avgConf >= 0.7) { status = "Mukemmel"; color = "green"; }
+      else if (avgConf >= 0.4) { status = "Iyi"; color = "blue"; }
+      else if (avgConf >= 0.2) { status = "Dusuk"; color = "yellow"; }
+      else { status = "Cok Dusuk"; color = "red"; }
+
+      // Gözlük tespiti (landmarks üzerinden)
+      const landmarks = faceTracker.getLastLandmarks();
+      if (landmarks && landmarks.length > 0) {
+        const detection = glassesDetector.update(landmarks);
+        if (detection.detected && !glassesNotifiedRef.current) {
+          glassesNotifiedRef.current = true;
+          onGlassesDetected(detection.message);
+        }
+      }
+
+      setQuality({ confidence: avgConf, fps, status, color });
+    }, 500);
+    return () => clearInterval(interval);
+  }, [faceTracker, isTracking, glassesDetector, onGlassesDetected]);
+
+  if (!isTracking) return null;
+
+  const colorClasses: Record<string, { bg: string; text: string }> = {
+    green: { bg: "bg-green-500", text: "text-green-400" },
+    blue: { bg: "bg-blue-500", text: "text-blue-400" },
+    yellow: { bg: "bg-yellow-500", text: "text-yellow-400" },
+    red: { bg: "bg-red-500", text: "text-red-400" },
+    gray: { bg: "bg-gray-500", text: "text-gray-400" },
+  };
+
+  const c = colorClasses[quality.color] ?? colorClasses.gray;
+
+  return (
+    <div className="fixed top-4 right-4 z-40 bg-gray-900/90 backdrop-blur rounded-lg px-3 py-2 border border-gray-700 min-w-[110px]">
+      <div className="flex items-center gap-2 mb-1">
+        <div className={`w-2.5 h-2.5 rounded-full ${c.bg} ${quality.color === "red" ? "animate-pulse" : ""}`} />
+        <span className={`text-xs font-semibold ${c.text}`}>{quality.status}</span>
+      </div>
+      <div className="text-[10px] text-gray-500">
+        Guven: {Math.round(quality.confidence * 100)}%
+      </div>
+      {quality.color === "red" && (
+        <p className="text-[10px] text-red-400 mt-1">Yuzunuzu kameraya yaklastirin</p>
+      )}
+      {quality.color === "yellow" && (
+        <p className="text-[10px] text-yellow-400 mt-1">Basinizi sabit tutun</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Drift düzeltme noktası — görüntüler arası geçişte ekran merkezine bakış doğrulama.
+ * 2 saniye boyunca merkez noktaya bakılır, toplanan gaze verisi ile model micro-correction yapar.
+ */
+function DriftCorrectionOverlay({
+  model,
+  faceTracker,
+  onDone,
+  photoNum,
+  totalPhotos,
+}: {
+  model: GazeModel;
+  faceTracker: FaceTracker;
+  onDone: () => void;
+  photoNum: number;
+  totalPhotos: number;
+}) {
+  const [progress, setProgress] = useState(0);
+  const gazeCollectorRef = useRef<Array<{ px: number; py: number }>>([]);
+  const animRef = useRef<number>(0);
+  const startTimeRef = useRef(performance.now());
+  const DURATION = 2000; // 2 saniye
+  const centerX = typeof window !== "undefined" ? window.innerWidth / 2 : 960;
+  const centerY = typeof window !== "undefined" ? window.innerHeight / 2 : 540;
+
+  useEffect(() => {
+    startTimeRef.current = performance.now();
+    gazeCollectorRef.current = [];
+
+    const loop = () => {
+      const elapsed = performance.now() - startTimeRef.current;
+      setProgress(Math.min(1, elapsed / DURATION));
+
+      // Gaze toplanması
+      const features = faceTracker.getLastFeatures();
+      if (features && features.confidence > 0.2) {
+        const pred = model.predict(features);
+        if (pred) {
+          gazeCollectorRef.current.push({ px: pred.x, py: pred.y });
+        }
+      }
+
+      if (elapsed >= DURATION) {
+        // Toplanan verilerle drift hesapla
+        const samples = gazeCollectorRef.current;
+        if (samples.length >= 5) {
+          const avgX = samples.reduce((s, p) => s + p.px, 0) / samples.length;
+          const avgY = samples.reduce((s, p) => s + p.py, 0) / samples.length;
+          const driftX = centerX - avgX;
+          const driftY = centerY - avgY;
+          // Sadece makul drift ise düzelt (çok büyük drift hatalı veri demek)
+          const maxDrift = Math.min(window.innerWidth, window.innerHeight) * 0.15;
+          if (Math.abs(driftX) < maxDrift && Math.abs(driftY) < maxDrift) {
+            model.applyDriftCorrection(centerX, centerY, avgX, avgY);
+          }
+        }
+        onDone();
+        return;
+      }
+
+      animRef.current = requestAnimationFrame(loop);
+    };
+
+    animRef.current = requestAnimationFrame(loop);
+    return () => {
+      if (animRef.current) cancelAnimationFrame(animRef.current);
+    };
+  }, [model, faceTracker, onDone, centerX, centerY]);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
+      {/* Merkez nokta */}
+      <div className="relative">
+        <div className="w-10 h-10 rounded-full border-2 border-white/60 flex items-center justify-center">
+          <div className="w-3 h-3 rounded-full bg-white" />
+        </div>
+        {/* Dairesel progress */}
+        <svg className="absolute -inset-2 w-14 h-14" viewBox="0 0 56 56">
+          <circle
+            cx="28" cy="28" r="24"
+            fill="none"
+            stroke="rgba(59,130,246,0.3)"
+            strokeWidth="3"
+          />
+          <circle
+            cx="28" cy="28" r="24"
+            fill="none"
+            stroke="#3b82f6"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={`${progress * 150.8} 150.8`}
+            transform="rotate(-90 28 28)"
+          />
+        </svg>
+      </div>
+      <div className="absolute bottom-20 text-center">
+        <p className="text-white text-sm font-medium">Merkeze bakin</p>
+        <p className="text-gray-500 text-xs mt-1">
+          Foto {photoNum}/{totalPhotos} — Drift duzeltme
+        </p>
+      </div>
     </div>
   );
 }
