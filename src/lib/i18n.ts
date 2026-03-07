@@ -87,6 +87,12 @@ export const translations: Record<
     tcEntryExplanation: string;
     noPhotosYet: string;
     noPhotosYetHint: string;
+    fullNameLabel: string;
+    fullNamePlaceholder: string;
+    testCompleteTitle: string;
+    testCompleteMessage: string;
+    noTestImages: string;
+    registrationError: string;
   }
 > = {
   tr: {
@@ -178,6 +184,12 @@ export const translations: Record<
     tcEntryExplanation: "Farklı kişiler kullanacağı için TC Kimlik No ile giriş yapılmaktadır. Her TC yalnızca bir kez kullanılabilir.",
     noPhotosYet: "Fotoğraflar henüz yüklenmedi.",
     noPhotosYetHint: "Devam etmek için fotoğraf yükleyin.",
+    fullNameLabel: "Ad Soyad",
+    fullNamePlaceholder: "Adınız ve soyadınız",
+    testCompleteTitle: "Test Tamamlandı",
+    testCompleteMessage: "Katılımınız için teşekkür ederiz. Bu pencereyi kapatabilirsiniz.",
+    noTestImages: "Henüz test görseli yüklenmemiş. Lütfen yöneticinize başvurun.",
+    registrationError: "Kayıt sırasında bir hata oluştu. Lütfen tekrar deneyin.",
   },
   en: {
     appTitle: "Eye Tracking Analysis",
@@ -268,6 +280,12 @@ export const translations: Record<
     tcEntryExplanation: "Entry is done with ID number because different people will use it. Each ID can only be used once.",
     noPhotosYet: "No photos have been uploaded yet.",
     noPhotosYetHint: "Upload photos to continue.",
+    fullNameLabel: "Full Name",
+    fullNamePlaceholder: "Your full name",
+    testCompleteTitle: "Test Completed",
+    testCompleteMessage: "Thank you for your participation. You can close this window.",
+    noTestImages: "No test images have been uploaded yet. Please contact your administrator.",
+    registrationError: "An error occurred during registration. Please try again.",
   },
 };
 

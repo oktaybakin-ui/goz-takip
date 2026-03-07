@@ -27,6 +27,8 @@ export type { ResultPerImage };
 interface EyeTrackerProps {
   imageUrls: string[];
   onReset?: () => void;
+  onTrackingComplete?: (results: ResultPerImage[], calibrationErrorPx: number) => void;
+  sessionId?: string;
 }
 
 type AppPhase = "loading" | "camera_init" | "pupil_align" | "calibration" | "tracking" | "results";
@@ -124,7 +126,7 @@ function smoothGazePointsForExport<T extends { x: number; y: number; timestamp: 
   });
 }
 
-export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
+export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, sessionId }: EyeTrackerProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -405,6 +407,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         metrics: metricsByImageRef.current[i] ?? null,
         imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
       }));
+      if (onTrackingComplete) {
+        onTrackingComplete(results, calibrationError);
+        return;
+      }
       setResultsPerImage(results);
       setPhase("results");
       return;
@@ -438,7 +444,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     requestAnimationFrame(() => {
       advancingRef.current = false;
     });
-  }, [isMultiImage, isTracking, trackingDuration, currentImageIndex, imageUrls, imageDimensions]);
+  }, [isMultiImage, isTracking, trackingDuration, currentImageIndex, imageUrls, imageDimensions, onTrackingComplete, calibrationError]);
 
   // Geçiş overlay ref'ini state ile senkronize et (tracking callback state okuyamaz)
   useEffect(() => {
@@ -844,6 +850,10 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
         metrics: metricsByImageRef.current[i] ?? null,
         imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
       }));
+      if (onTrackingComplete) {
+        onTrackingComplete(results, calibrationError);
+        return;
+      }
       // Verisi olan sonuçları göster
       const nonEmpty = results.filter(r => r.gazePoints.length > 0 || r.metrics !== null);
       if (nonEmpty.length > 0) {
@@ -852,7 +862,7 @@ export default function EyeTracker({ imageUrls, onReset }: EyeTrackerProps) {
     }
 
     setPhase("results");
-  }, [isMultiImage, currentImageIndex, imageUrls, imageDimensions]);
+  }, [isMultiImage, currentImageIndex, imageUrls, imageDimensions, onTrackingComplete, calibrationError]);
 
   // Klavye kısayolları (takip ekranında)
   useEffect(() => {
