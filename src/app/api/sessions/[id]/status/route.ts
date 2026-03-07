@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase-server";
 
+export const dynamic = "force-dynamic";
+
 async function handleUpdate(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }

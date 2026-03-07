@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase-server";
 import { hashTC, validateTCServer } from "@/lib/api-helpers";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
   try {
     const { fullName, tc } = await request.json();

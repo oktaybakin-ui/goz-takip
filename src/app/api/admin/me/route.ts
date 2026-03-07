@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { getAdminTokenFromCookie, verifyAdminToken } from "@/lib/admin-auth";
 
+export const dynamic = "force-dynamic";
+
 export async function GET() {
   const token = await getAdminTokenFromCookie();
   if (!token) {
