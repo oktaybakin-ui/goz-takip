@@ -43,3 +43,30 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json(data);
 }
+
+export async function DELETE(request: NextRequest) {
+  const denied = await requireAdmin();
+  if (denied) return denied;
+
+  try {
+    const { participantId } = await request.json();
+
+    if (!participantId) {
+      return NextResponse.json({ error: "participantId required" }, { status: 400 });
+    }
+
+    // CASCADE siler: participant → test_sessions → image_results
+    const { error } = await supabase
+      .from("participants")
+      .delete()
+      .eq("id", participantId);
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+
+    return NextResponse.json({ success: true });
+  } catch {
+    return NextResponse.json({ error: "Invalid request" }, { status: 400 });
+  }
+}

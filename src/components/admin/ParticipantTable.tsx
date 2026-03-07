@@ -38,6 +38,23 @@ export default function ParticipantTable() {
     return () => clearTimeout(timer);
   }, [fetchData]);
 
+  const handleDelete = async (participantId: string, name: string) => {
+    if (!confirm(`"${name}" adlı katılımcıyı ve tüm test verilerini silmek istediğinize emin misiniz?`)) return;
+
+    try {
+      const res = await fetch("/api/admin/participants", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participantId }),
+      });
+      if (res.ok) {
+        setSessions((prev) => prev.filter((s) => s.participants.id !== participantId));
+      }
+    } catch {
+      // silently fail
+    }
+  };
+
   return (
     <div>
       <h2 className="text-xl font-bold text-white mb-4">Katılımcılar</h2>
@@ -114,13 +131,19 @@ export default function ParticipantTable() {
                   <td className="py-3 px-4 text-gray-400">
                     {s.calibration_error_px?.toFixed(1) ?? "-"}
                   </td>
-                  <td className="py-3 px-4">
+                  <td className="py-3 px-4 flex gap-2">
                     <Link
                       href={`/admin/participants/${s.id}`}
                       className="text-blue-400 hover:text-blue-300 text-sm"
                     >
                       Detay
                     </Link>
+                    <button
+                      onClick={() => handleDelete(s.participants.id, s.participants.full_name)}
+                      className="text-red-500 hover:text-red-400 text-sm"
+                    >
+                      Sil
+                    </button>
                   </td>
                 </tr>
               ))}
