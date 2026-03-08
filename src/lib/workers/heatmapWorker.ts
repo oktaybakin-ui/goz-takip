@@ -45,15 +45,18 @@ export function heatmapWorkerFn() {
     const len = width * height * 4;
     const outputData = new Uint8ClampedArray(len);
 
-    // Percentile-based normalizasyon: p98 değerini referans al
-    const nonZeroValues: number[] = [];
+    // Percentile-based normalizasyon (histogram yöntemi — O(n) sort gerektirmez)
+    const histogram = new Uint32Array(256);
+    let totalNonZero = 0;
     for (let i = 3; i < len; i += 4) {
-      if (intensityData[i] > 0) {
-        nonZeroValues.push(intensityData[i]);
+      const v = intensityData[i];
+      if (v > 0) {
+        histogram[v]++;
+        totalNonZero++;
       }
     }
 
-    if (nonZeroValues.length === 0) {
+    if (totalNonZero === 0) {
       (self as any).postMessage(
         { type: "colorized", outputData, width, height },
         [outputData.buffer]
@@ -61,11 +64,18 @@ export function heatmapWorkerFn() {
       return;
     }
 
-    nonZeroValues.sort((a: number, b: number) => a - b);
-    const p98Index = Math.floor(nonZeroValues.length * 0.98);
-    const p98Value = nonZeroValues[Math.min(p98Index, nonZeroValues.length - 1)];
-    const normCeil = Math.max(1, p98Value);
-    const normFactor = 255 / normCeil;
+    // p98 değerini histogram üzerinden bul
+    const p98Target = Math.floor(totalNonZero * 0.98);
+    let cumulative = 0;
+    let p98Value = 1;
+    for (let v = 1; v < 256; v++) {
+      cumulative += histogram[v];
+      if (cumulative >= p98Target) {
+        p98Value = v;
+        break;
+      }
+    }
+    const normFactor = 255 / Math.max(1, p98Value);
 
     for (let i = 0; i < len; i += 4) {
       const rawIntensity = intensityData[i + 3];

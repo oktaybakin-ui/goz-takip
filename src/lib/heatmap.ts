@@ -244,23 +244,32 @@ export class HeatmapGenerator {
     const outputData = outputCtx.createImageData(width, height);
     const palette = gradientCtx.getImageData(0, 0, 256, 1).data;
 
-    // Percentile-based normalizasyon: p98 değerini referans al
+    // Percentile-based normalizasyon (histogram yöntemi — O(n) sort gerektirmez)
     // Az fiksasyonla (3-10 adet) bile kırmızı renk üretilebilir
-    const nonZeroValues: number[] = [];
+    const histogram = new Uint32Array(256);
+    let totalNonZero = 0;
     for (let i = 3; i < intensityData.data.length; i += 4) {
-      if (intensityData.data[i] > 0) {
-        nonZeroValues.push(intensityData.data[i]);
+      const v = intensityData.data[i];
+      if (v > 0) {
+        histogram[v]++;
+        totalNonZero++;
       }
     }
 
-    if (nonZeroValues.length === 0) return;
+    if (totalNonZero === 0) return;
 
-    nonZeroValues.sort((a, b) => a - b);
-    const p98Index = Math.floor(nonZeroValues.length * 0.98);
-    const p98Value = nonZeroValues[Math.min(p98Index, nonZeroValues.length - 1)];
-    // Üst %2 kırmızıya saturate olur, geri kalanı tam gradyan aralığına yayılır
-    const normCeil = Math.max(1, p98Value);
-    const normFactor = 255 / normCeil;
+    // p98 değerini histogram üzerinden bul
+    const p98Target = Math.floor(totalNonZero * 0.98);
+    let cumulative = 0;
+    let p98Value = 1;
+    for (let v = 1; v < 256; v++) {
+      cumulative += histogram[v];
+      if (cumulative >= p98Target) {
+        p98Value = v;
+        break;
+      }
+    }
+    const normFactor = 255 / Math.max(1, p98Value);
 
     for (let i = 0; i < intensityData.data.length; i += 4) {
       const rawIntensity = intensityData.data[i + 3];
