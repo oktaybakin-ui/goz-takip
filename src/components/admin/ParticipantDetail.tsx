@@ -31,19 +31,10 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
       .finally(() => setLoading(false));
   }, [sessionId]);
 
-  if (loading) {
-    return <div className="text-gray-400">Yükleniyor...</div>;
-  }
-
-  if (!data) {
-    return <div className="text-red-400">Oturum bulunamadı.</div>;
-  }
-
-  const { session, results } = data;
-  const currentResult = results[selectedImage];
-
   // Gaze verilerinden heatmap oluştur
   useEffect(() => {
+    if (!data) return;
+    const currentResult = data.results[selectedImage];
     if (!currentResult || !heatmapCanvasRef.current) return;
 
     const gazePoints = (currentResult.gaze_points ?? []) as GazePoint[];
@@ -68,7 +59,18 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
       width,
       height
     );
-  }, [currentResult]);
+  }, [data, selectedImage]);
+
+  if (loading) {
+    return <div className="text-gray-400">Yükleniyor...</div>;
+  }
+
+  if (!data) {
+    return <div className="text-red-400">Oturum bulunamadı.</div>;
+  }
+
+  const { session, results } = data;
+  const currentResult = results[selectedImage];
 
   return (
     <div>
