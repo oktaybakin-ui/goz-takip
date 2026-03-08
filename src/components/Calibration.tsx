@@ -46,6 +46,7 @@ export default function Calibration({
   const affinePointsRef = useRef<{ predX: number; predY: number; trueX: number; trueY: number }[]>([]);
   const validationPointRef = useRef<{ relX: number; relY: number } | null>(null);
   const phaseRef = useRef<string>("idle");
+  const hasAutoTransitionedRef = useRef(false);
   const [storedInfo, setStoredInfo] = useState<ReturnType<typeof loadCalibration>>(null);
   const { t } = useLang();
 
@@ -351,17 +352,20 @@ export default function Calibration({
   }, [model, state?.meanError]);
 
   // Model eğitimi bitince (phase=complete) otomatik GazePreview'a geç
+  // hasAutoTransitionedRef: onConfirm sonrası tekrar GazePreview açılmasını engeller
   useEffect(() => {
-    if (state?.phase === "complete" && !showGazePreview) {
+    if (state?.phase === "complete" && !hasAutoTransitionedRef.current) {
+      hasAutoTransitionedRef.current = true;
       handleSaveCalibration();
       setShowGazePreview(true);
     }
-  }, [state?.phase, showGazePreview, handleSaveCalibration]);
+  }, [state?.phase, handleSaveCalibration]);
 
   // Tekrar et
   const handleRetry = useCallback(() => {
     const manager = managerRef.current;
     if (!manager) return;
+    hasAutoTransitionedRef.current = false;
     manager.reset();
     validationErrorsRef.current = [];
     setWarning(null);
