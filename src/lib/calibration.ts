@@ -72,8 +72,10 @@ export function generateCalibrationPoints(
     rows = r;
     cols = c;
   } else {
-    cols = 3;  // Her zaman 3×3=9 nokta — hızlı kalibrasyon
-    rows = 3;
+    // Masaustunde 4x4 varsayilan daha iyi dogruluk verir,
+    // mobilde sureyi kisa tutmak icin 3x3 kullan.
+    cols = mobile ? 3 : 4;
+    rows = mobile ? 3 : 4;
   }
 
   for (let row = 0; row < rows; row++) {

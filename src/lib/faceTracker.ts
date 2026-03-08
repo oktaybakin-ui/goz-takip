@@ -373,7 +373,14 @@ export class FaceTracker {
   }
 
   private async processFrame(): Promise<void> {
-    if (!this.isRunning || !this.videoElement || !this.faceMesh) return;
+    if (!this.isRunning) return;
+
+    // Video element veya model geçici olarak yoksa döngüyü kesme.
+    // Faz geçişlerinde (örn. pupil_align -> calibration) kısa süreli null olabilir.
+    if (!this.videoElement || !this.faceMesh) {
+      this.animFrameId = requestAnimationFrame(() => this.processFrame());
+      return;
+    }
 
     const now = performance.now();
 

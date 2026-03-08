@@ -45,7 +45,6 @@ export default function PupilAlignStep({ faceTracker, videoRef: parentVideoRef, 
       if (video.videoWidth) onResize();
       return () => {
         video.removeEventListener("loadedmetadata", onResize);
-        if (parentVideoRef) faceTracker.setVideoElement(null);
       };
     }
   }, [faceTracker, parentVideoRef, videoRef]);
