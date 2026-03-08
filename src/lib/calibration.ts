@@ -72,8 +72,8 @@ export function generateCalibrationPoints(
     rows = r;
     cols = c;
   } else {
-    cols = mobile ? 3 : 4;  // Mobilde 3×3=9 nokta, masaüstünde 4×4=16
-    rows = mobile ? 3 : 4;
+    cols = 3;  // Her zaman 3×3=9 nokta — hızlı kalibrasyon
+    rows = 3;
   }
 
   for (let row = 0; row < rows; row++) {
@@ -208,19 +208,19 @@ export class CalibrationManager {
   private currentPointFrameCount: number = 0;
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
-  private readonly IRIS_BUFFER_SIZE = 8;
-  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.055 : 0.04;    // Gevşetildi — daha fazla örnek geçsin
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 25 : 25;        // 4x4 default: 16 nokta × 25 = 400 örnek
+  private readonly IRIS_BUFFER_SIZE = 5;
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.07 : 0.06;    // Çok gevşek — neredeyse hep geçer
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 20 : 20;        // 3x3: 9 nokta × 20 = 180 örnek
   private gridSize: GridSize | undefined = undefined;
-  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.35; // Gevşetildi
-  private readonly RETRY_QUALITY_THRESHOLD = 8; // Gevşetildi — daha az retry
+  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.25; // Çok gevşek
+  private readonly RETRY_QUALITY_THRESHOLD = 0; // Retry tamamen kapalı
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();
-  private readonly MAX_RETRIES_PER_POINT = 2;
-  // Sorun #27: Global retry limiti — sonsuz retry döngüsünü önler
+  private readonly MAX_RETRIES_PER_POINT = 0;
+  // Retry tamamen devre dışı
   private totalRetryCount: number = 0;
-  private readonly MAX_TOTAL_RETRIES = 3;
+  private readonly MAX_TOTAL_RETRIES = 0;
 
   // Bölgesel kalite haritası (ekranın hangi bölgelerinde hata yüksek)
   private regionErrors: Map<string, number[]> = new Map();
@@ -297,7 +297,7 @@ export class CalibrationManager {
   /** FPS bilgisini güncelle (kamera FPS'i) */
   setFPS(fps: number): void {
     this.detectedFPS = Math.max(15, Math.min(120, fps));
-    this.settleFrames = Math.round(this.detectedFPS * 0.5); // 1.5→2.0: göz tam sabitlenene kadar bekle
+    this.settleFrames = Math.round(this.detectedFPS * 0.3); // Hızlı geçiş
     logger.log("[Calibration] FPS:", this.detectedFPS, "| Settle frames:", this.settleFrames);
   }
 

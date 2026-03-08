@@ -81,33 +81,26 @@ export default function Calibration({
     setCurrentPoint(point);
     setSampleProgress(0);
     samplingRef.current = false;
-
-    let count = 1;  // 1 saniye geri sayım — agresif zamanlama (~60s toplam akış)
-    setCountdown(count);
+    setCountdown(0);
 
     if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
+    countdownTimerRef.current = null;
 
-    countdownTimerRef.current = setInterval(() => {
-      count--;
-      setCountdown(count);
-
-      if (count <= 0) {
-        if (countdownTimerRef.current) clearInterval(countdownTimerRef.current);
-        countdownTimerRef.current = null;
-        samplingRef.current = true;
-
-        if (isValidation) {
-          startValidationSamplingRef.current(manager);
-        } else {
-          startCalibrationSamplingRef.current(manager);
-        }
+    // Geri sayım yok — settle frames zaten göz sabitlenmesini bekliyor
+    // 100ms gecikme ile noktanın render olmasını bekle
+    setTimeout(() => {
+      samplingRef.current = true;
+      if (isValidation) {
+        startValidationSamplingRef.current(manager);
+      } else {
+        startCalibrationSamplingRef.current(manager);
       }
-    }, 1000);
+    }, 100);
   }, []);
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = isMobileDevice() ? 8000 : 5000; // Agresif zamanlama
+    const POINT_TIMEOUT_MS = isMobileDevice() ? 6000 : 3500; // Çok agresif — hızlı kalibrasyon
     // Duplicate detection: rAF ~60fps ama faceTracker ~30fps, aynı features tekrar okunabilir
     let lastFeaturesRef: EyeFeatures | null = null;
 
@@ -351,15 +344,15 @@ export default function Calibration({
     }
   }, [model, state?.meanError]);
 
-  // Model eğitimi bitince (phase=complete) otomatik GazePreview'a geç
-  // hasAutoTransitionedRef: onConfirm sonrası tekrar GazePreview açılmasını engeller
+  // Model eğitimi bitince (phase=complete) doğrudan analize geç — GazePreview atlanıyor
   useEffect(() => {
     if (state?.phase === "complete" && !hasAutoTransitionedRef.current) {
       hasAutoTransitionedRef.current = true;
       handleSaveCalibration();
-      setShowGazePreview(true);
+      // GazePreview'u atla, doğrudan handleComplete çağır
+      handleComplete();
     }
-  }, [state?.phase, handleSaveCalibration]);
+  }, [state?.phase, handleSaveCalibration, handleComplete]);
 
   // Tekrar et
   const handleRetry = useCallback(() => {
