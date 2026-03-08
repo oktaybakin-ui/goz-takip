@@ -15,6 +15,7 @@
  */
 
 import { GazePoint } from "./gazeModel";
+import { CONFIDENCE_MIN_FIXATION } from "@/constants";
 
 export interface Fixation {
   x: number;
@@ -176,7 +177,7 @@ export class FixationDetector {
       this.gazePoints.splice(0, this.gazePoints.length - this.MAX_GAZE_POINTS);
     }
 
-    if (point.confidence < 0.3) return null;
+    if (point.confidence < CONFIDENCE_MIN_FIXATION) return null;
 
     // Göz kırpma boşluğu tespiti (100-400ms)
     if (this.lastValidTimestamp > 0) {

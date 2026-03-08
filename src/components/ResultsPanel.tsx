@@ -49,6 +49,7 @@ export default function ResultsPanel({
   if (!heatmapGeneratorRef.current) heatmapGeneratorRef.current = new HeatmapGenerator();
 
   const metrics = isMulti ? (resultsPerImage![selectedPhotoIndex]?.metrics ?? null) : (metricsProp ?? null);
+  const selectedBlinkMetrics = isMulti ? (resultsPerImage![selectedPhotoIndex]?.blinkMetrics ?? null) : null;
   const gazePoints = useMemo(
     () => (isMulti ? (resultsPerImage![selectedPhotoIndex]?.gazePoints ?? []) : (gazePointsProp ?? [])),
     [isMulti, resultsPerImage, selectedPhotoIndex, gazePointsProp]
@@ -381,6 +382,12 @@ export default function ResultsPanel({
                   <MetricRow label="En Uzun Fixation" value={formatMs(metrics.longestFixation.duration)} />
                 )}
                 <MetricRow label="Saccade Sayısı" value={`${metrics.saccades.length}`} />
+                {selectedBlinkMetrics && (
+                  <>
+                    <MetricRow label="Göz Kırpma" value={`${selectedBlinkMetrics.blinkCount}`} />
+                    <MetricRow label="Kırpma Hızı" value={`${Math.round(selectedBlinkMetrics.blinkRate * 10) / 10}/dk`} />
+                  </>
+                )}
                 <MetricRow label="ROI Bölgesi" value={`${metrics.roiClusters.length}`} />
               </div>
 

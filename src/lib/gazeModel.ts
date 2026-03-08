@@ -12,6 +12,7 @@ import { logger } from "./logger";
 import { AdvancedIrisDetector } from "./advancedIrisDetection";
 import { createInlineWorker, postWorkerMessage } from "./workers/createWorker";
 import { gazeModelTrainWorkerFn, type TrainWorkerInput, type TrainWorkerOutput } from "./workers/gazeModelTrainWorker";
+import { EAR_BLINK_THRESHOLD, EAR_BLINK_THRESHOLD_MOBILE, CONFIDENCE_MIN_TRACKING, CONFIDENCE_MIN_TRACKING_MOBILE, SPATIAL_EDGE_WEIGHT } from "@/constants";
 
 export interface EyeFeatures {
   // Ham iris koordinatları (MediaPipe normalized 0-1)
@@ -269,8 +270,8 @@ export class OneEuroFilter {
     const speedFactor = Math.min(velocity / 500, 1.0);
     // Confidence-weighted: düşük güven = daha fazla smoothing (düşük cutoff)
     const confFactor = Math.max(0.3, Math.min(1.0, confidence));
-    // Fixation: 0.8Hz (güçlü smoothing), Saccade: 6Hz (hızlı takip)
-    this.minCutoff = (0.8 + speedFactor * 5.2) * confFactor;
+    // Fixation: 1.0Hz (güçlü smoothing), Saccade: 6Hz (hızlı takip)
+    this.minCutoff = (1.0 + speedFactor * 5.0) * confFactor;
     this.beta = (0.005 + speedFactor * 0.02) * confFactor;
   }
 
@@ -527,8 +528,7 @@ export class GazeModel {
       const dist = Math.sqrt(
         (s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2
       );
-      // Sorun #19: Kenar ağırlığı azaltıldı (0.6→0.35) — overfitting riski düşürülüyor
-      const spatialWeight = 1 + 0.35 * (dist / screenDiag);
+      const spatialWeight = 1 + SPATIAL_EDGE_WEIGHT * (dist / screenDiag);
       return confWeight * spatialWeight;
     });
 
@@ -637,7 +637,7 @@ export class GazeModel {
         const dist = Math.sqrt(
           (s.targetX - screenCenterX2) ** 2 + (s.targetY - screenCenterY2) ** 2
         );
-        const spatialWeight = 1 + 0.6 * (dist / screenDiag2);
+        const spatialWeight = 1 + SPATIAL_EDGE_WEIGHT * (dist / screenDiag2);
         return confWeight * spatialWeight;
       });
       this.weightsX = ridgeRegression(polyFeatures2, targetsX2, this.lambda, sampleWeights2);
@@ -717,13 +717,13 @@ export class GazeModel {
       /Android|iPhone|iPad|iPod/i.test(navigator?.userAgent ?? "") ||
       (window.screen.width <= 768 && "ontouchstart" in window)
     );
-    const blinkEARThreshold = isMobile ? 0.12 : 0.18;
+    const blinkEARThreshold = isMobile ? EAR_BLINK_THRESHOLD_MOBILE : EAR_BLINK_THRESHOLD;
     if (features.isBlinking === undefined && avgEAR < blinkEARThreshold) {
       return null;
     }
 
     // Confidence çok düşükse atla — mobilde eşik düşük (kamera kalitesi nedeniyle)
-    const minPredictConf = isMobile ? 0.05 : 0.15;
+    const minPredictConf = isMobile ? CONFIDENCE_MIN_TRACKING_MOBILE : CONFIDENCE_MIN_TRACKING;
     if (features.confidence < minPredictConf) {
       return null;
     }

@@ -13,6 +13,7 @@
 import { EyeFeatures, CalibrationSample, GazeModel } from "./gazeModel";
 import { logger } from "./logger";
 import { isMobileDevice } from "./deviceDetect";
+import { CONFIDENCE_MIN_CALIBRATION_SAMPLE } from "@/constants";
 
 export interface CalibrationPoint {
   id: number;
@@ -345,7 +346,7 @@ export class CalibrationManager {
     }
 
     // Minimum güven kontrolü — çok düşük eşik, sadece tamamen boş frame'leri atla
-    if (features.confidence < 0.05) return false;
+    if (features.confidence < CONFIDENCE_MIN_CALIBRATION_SAMPLE) return false;
 
     // Tüm iris stabilite filtreleri kaldırıldı — ham veri topla
 

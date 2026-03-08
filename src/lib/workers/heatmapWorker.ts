@@ -45,15 +45,15 @@ export function heatmapWorkerFn() {
     const len = width * height * 4;
     const outputData = new Uint8ClampedArray(len);
 
-    // Maksimum yoğunluğu bul
-    let maxIntensity = 0;
+    // Percentile-based normalizasyon: p98 değerini referans al
+    const nonZeroValues: number[] = [];
     for (let i = 3; i < len; i += 4) {
-      if (intensityData[i] > maxIntensity) {
-        maxIntensity = intensityData[i];
+      if (intensityData[i] > 0) {
+        nonZeroValues.push(intensityData[i]);
       }
     }
 
-    if (maxIntensity === 0) {
+    if (nonZeroValues.length === 0) {
       (self as any).postMessage(
         { type: "colorized", outputData, width, height },
         [outputData.buffer]
@@ -61,7 +61,11 @@ export function heatmapWorkerFn() {
       return;
     }
 
-    const normFactor = 255 / maxIntensity;
+    nonZeroValues.sort((a: number, b: number) => a - b);
+    const p98Index = Math.floor(nonZeroValues.length * 0.98);
+    const p98Value = nonZeroValues[Math.min(p98Index, nonZeroValues.length - 1)];
+    const normCeil = Math.max(1, p98Value);
+    const normFactor = 255 / normCeil;
 
     for (let i = 0; i < len; i += 4) {
       const rawIntensity = intensityData[i + 3];

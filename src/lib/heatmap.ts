@@ -244,34 +244,35 @@ export class HeatmapGenerator {
     const outputData = outputCtx.createImageData(width, height);
     const palette = gradientCtx.getImageData(0, 0, 256, 1).data;
 
-    // Maksimum yoğunluğu bul (normalize etmek için)
-    let maxIntensity = 0;
+    // Percentile-based normalizasyon: p98 değerini referans al
+    // Az fiksasyonla (3-10 adet) bile kırmızı renk üretilebilir
+    const nonZeroValues: number[] = [];
     for (let i = 3; i < intensityData.data.length; i += 4) {
-      if (intensityData.data[i] > maxIntensity) {
-        maxIntensity = intensityData.data[i];
+      if (intensityData.data[i] > 0) {
+        nonZeroValues.push(intensityData.data[i]);
       }
     }
 
-    if (maxIntensity === 0) return;
+    if (nonZeroValues.length === 0) return;
 
-    // Normalize ve renk uygula
-    const normFactor = 255 / maxIntensity;
+    nonZeroValues.sort((a, b) => a - b);
+    const p98Index = Math.floor(nonZeroValues.length * 0.98);
+    const p98Value = nonZeroValues[Math.min(p98Index, nonZeroValues.length - 1)];
+    // Üst %2 kırmızıya saturate olur, geri kalanı tam gradyan aralığına yayılır
+    const normCeil = Math.max(1, p98Value);
+    const normFactor = 255 / normCeil;
 
     for (let i = 0; i < intensityData.data.length; i += 4) {
-      // Alpha kanalını yoğunluk olarak kullan
       const rawIntensity = intensityData.data[i + 3];
 
       if (rawIntensity > 0) {
-        // Normalize et
         const intensity = Math.min(255, Math.round(rawIntensity * normFactor));
 
-        // Palette'ten renk al
         const paletteIndex = intensity * 4;
         outputData.data[i] = palette[paletteIndex];       // R
         outputData.data[i + 1] = palette[paletteIndex + 1]; // G
         outputData.data[i + 2] = palette[paletteIndex + 2]; // B
 
-        // Opaklık - yoğunluğa orantılı
         const normalizedIntensity = intensity / 255;
         const opacity =
           this.config.minOpacity +

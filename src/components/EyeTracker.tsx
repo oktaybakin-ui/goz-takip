@@ -9,7 +9,7 @@ import { HeatmapGenerator } from "@/lib/heatmap";
 import { WebGLHeatmapRenderer } from "@/lib/webglHeatmap";
 import { MultiModelEnsemble } from "@/lib/multiModelEnsemble";
 import { AutoRecalibration } from "@/lib/autoRecalibration";
-import { BlinkDetector } from "@/lib/blinkDetector";
+import { BlinkDetector, BlinkEvent, BlinkMetrics } from "@/lib/blinkDetector";
 import { isMobileDevice } from "@/lib/deviceDetect";
 import { GlassesDetector } from "@/lib/glassesDetector";
 import { logger } from "@/lib/logger";
@@ -18,9 +18,14 @@ import Calibration from "./Calibration";
 import PupilAlignStep from "./PupilAlignStep";
 import HeatmapCanvas from "./HeatmapCanvas";
 import ResultsPanel from "./ResultsPanel";
+import QualityIndicator from "./QualityIndicator";
+import DriftCorrectionOverlay from "./DriftCorrectionOverlay";
+import CameraPreview from "./CameraPreview";
 
+import type { Saccade } from "@/lib/fixation";
 import type { ResultPerImage } from "@/types/results";
-import { IMAGE_DURATION_MS, GAZE_UI_THROTTLE_MS } from "@/constants";
+import { IMAGE_DURATION_MS, GAZE_UI_THROTTLE_MS, EAR_BLINK_THRESHOLD, EAR_BLINK_THRESHOLD_MOBILE, CONFIDENCE_MIN_TRACKING, CONFIDENCE_MIN_TRACKING_MOBILE } from "@/constants";
+import { getContentRect, screenToImageCoords, smoothGazePointsForExport } from "@/lib/coordinateTransform";
 
 export type { ResultPerImage };
 
@@ -32,106 +37,6 @@ interface EyeTrackerProps {
 }
 
 type AppPhase = "loading" | "camera_init" | "pupil_align" | "calibration" | "tracking" | "results";
-
-/** object-contain ile görüntü içeriğinin ekrandaki dikdörtgeni (letterbox/pillarbox). */
-function getContentRect(
-  imageRect: DOMRect,
-  displayWidth: number,
-  displayHeight: number,
-  naturalWidth?: number,
-  naturalHeight?: number
-): { contentLeft: number; contentTop: number; contentW: number; contentH: number } | null {
-  if (imageRect.width === 0 || imageRect.height === 0) return null;
-  const nw = naturalWidth ?? displayWidth;
-  const nh = naturalHeight ?? displayHeight;
-  const scale = Math.min(imageRect.width / nw, imageRect.height / nh);
-  const contentW = nw * scale;
-  const contentH = nh * scale;
-  const offsetX = (imageRect.width - contentW) / 2;
-  const offsetY = (imageRect.height - contentH) / 2;
-  return {
-    contentLeft: imageRect.left + offsetX,
-    contentTop: imageRect.top + offsetY,
-    contentW,
-    contentH,
-  };
-}
-
-/**
- * Ekran koordinatlarını görüntü (canvas) koordinatlarına dönüştür.
- *
- * object-contain kullanıldığında görüntü container içinde letterbox/pillarbox
- * olabilir. Gerçek içerik dikdörtgeni (content rect) hesaplanarak hassas eşleme yapılır.
- */
-function screenToImageCoords(
-  screenX: number,
-  screenY: number,
-  imageRect: DOMRect,
-  displayWidth: number,
-  displayHeight: number,
-  naturalWidth?: number,
-  naturalHeight?: number
-): { x: number; y: number } | null {
-  const content = getContentRect(imageRect, displayWidth, displayHeight, naturalWidth, naturalHeight);
-  if (!content) return null;
-  const { contentLeft, contentTop, contentW, contentH } = content;
-
-  const relX = (screenX - contentLeft) / contentW;
-  const relY = (screenY - contentTop) / contentH;
-
-  // Piksel koordinatlarına dönüştür
-  const rawX = relX * displayWidth;
-  const rawY = relY * displayHeight;
-
-  // Çok uzaktaki noktaları reddet (%50 tolerans), geri kalanı clamp et
-  const tolX = displayWidth * 0.5;
-  const tolY = displayHeight * 0.5;
-  if (rawX < -tolX || rawX > displayWidth + tolX || rawY < -tolY || rawY > displayHeight + tolY) {
-    return null;
-  }
-
-  const x = Math.max(0, Math.min(displayWidth, rawX));
-  const y = Math.max(0, Math.min(displayHeight, rawY));
-  return { x, y };
-}
-
-/**
- * Export için Savitzky-Golay benzeri yumuşatma: 5 noktalı pencere (Sorun #25).
- * 3 noktalı basit ortalama yerine 5 noktalı ağırlıklı ortalama — daha az faz kayması.
- * Ağırlıklar: [-3, 12, 17, 12, -3] / 35 (SG 2. derece, 5 nokta katsayıları)
- */
-function smoothGazePointsForExport<T extends { x: number; y: number; timestamp: number; confidence: number }>(
-  points: T[]
-): { x: number; y: number; timestamp_ms: number; confidence: number; dt_ms: number }[] {
-  if (points.length === 0) return [];
-  // SG katsayıları (normalize)
-  const sgWeights = [-3, 12, 17, 12, -3];
-  const sgSum = 35;
-  const halfWin = 2;
-  return points.map((p, i) => {
-    let x = p.x;
-    let y = p.y;
-    // Kenar noktalarında pencere daraltılır
-    if (i >= halfWin && i < points.length - halfWin) {
-      let sx = 0, sy = 0;
-      for (let k = -halfWin; k <= halfWin; k++) {
-        const w = sgWeights[k + halfWin];
-        sx += points[i + k].x * w;
-        sy += points[i + k].y * w;
-      }
-      x = sx / sgSum;
-      y = sy / sgSum;
-    }
-    const dt_ms = i === 0 ? 0 : Math.round(p.timestamp - points[i - 1].timestamp);
-    return {
-      x: Math.round(x),
-      y: Math.round(y),
-      timestamp_ms: Math.round(p.timestamp),
-      confidence: Math.round(p.confidence * 100) / 100,
-      dt_ms,
-    };
-  });
-}
 
 export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, sessionId }: EyeTrackerProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
@@ -187,9 +92,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const blinkDetectorRef = useRef<BlinkDetector>(null as unknown as BlinkDetector);
   // Mobilde EAR değerleri daha düşük → blink threshold'u düşür, consecutive frame'i artır
   if (!blinkDetectorRef.current) blinkDetectorRef.current = new BlinkDetector(
-    isMobileDevice() ? 0.14 : 0.20,  // Mobilde gözler daha küçük görünüyor
-    isMobileDevice() ? 4 : 3,         // Mobilde daha fazla frame gerekli (false positive azalt)
-    isMobileDevice() ? 1 : 2          // Mobilde daha kısa post-blink rejection
+    isMobileDevice() ? EAR_BLINK_THRESHOLD_MOBILE : EAR_BLINK_THRESHOLD,
+    isMobileDevice() ? 4 : 3,
+    isMobileDevice() ? 1 : 2
   );
   const heatmapRef = useRef<HeatmapGenerator>(null as unknown as HeatmapGenerator);
   if (!heatmapRef.current) heatmapRef.current = new HeatmapGenerator();
@@ -216,6 +121,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const fixationsByImageRef = useRef<Fixation[][]>([]);
   const metricsByImageRef = useRef<(FixationMetrics | null)[]>([]);
   const dimensionsByImageRef = useRef<Array<{ width: number; height: number }>>([]);
+  const saccadesByImageRef = useRef<Saccade[][]>([]);
+  const blinkEventsByImageRef = useRef<BlinkEvent[][]>([]);
+  const blinkMetricsByImageRef = useRef<(BlinkMetrics | null)[]>([]);
   const advancingRef = useRef(false);
 
   useEffect(() => {
@@ -224,6 +132,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       fixationsByImageRef.current = Array.from({ length: imageCount }, () => []);
       metricsByImageRef.current = Array(imageCount).fill(null);
       dimensionsByImageRef.current = Array.from({ length: imageCount }, () => ({ width: 0, height: 0 }));
+      saccadesByImageRef.current = Array.from({ length: imageCount }, () => []);
+      blinkEventsByImageRef.current = Array.from({ length: imageCount }, () => []);
+      blinkMetricsByImageRef.current = Array(imageCount).fill(null);
     }
   }, [imageCount]);
 
@@ -393,10 +304,14 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     advancingRef.current = true;
     const idx = currentImageIndex;
     fixationDetectorRef.current.stopTracking();
+    const currentMetricsSnap = fixationDetectorRef.current.getMetrics();
     gazePointsByImageRef.current[idx] = [...gazePointsRef.current];
     fixationsByImageRef.current[idx] = fixationDetectorRef.current.getFixations();
-    metricsByImageRef.current[idx] = fixationDetectorRef.current.getMetrics();
+    metricsByImageRef.current[idx] = currentMetricsSnap;
     dimensionsByImageRef.current[idx] = imageDimensions;
+    saccadesByImageRef.current[idx] = currentMetricsSnap.saccades;
+    blinkEventsByImageRef.current[idx] = blinkDetectorRef.current.getBlinkEvents();
+    blinkMetricsByImageRef.current[idx] = blinkDetectorRef.current.getMetrics();
 
     if (trackingTimerRef.current) {
       clearInterval(trackingTimerRef.current);
@@ -411,8 +326,11 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         imageUrl: url,
         gazePoints: gazePointsByImageRef.current[i] ?? [],
         fixations: fixationsByImageRef.current[i] ?? [],
+        saccades: saccadesByImageRef.current[i] ?? [],
         metrics: metricsByImageRef.current[i] ?? null,
         imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
+        blinkEvents: blinkEventsByImageRef.current[i] ?? [],
+        blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
       if (onTrackingComplete) {
         onTrackingComplete(results, calibrationError);
@@ -661,8 +579,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       lastFeatureTimestampRef.current = featureTimestamp;
       const processStart = performance.now();
 
-      // Mobilde kamera kalitesi düşük → confidence ve eyeOpenness eşiklerini gevşet
-      const minConfidence = mobile ? 0.05 : 0.15;
+      const minConfidence = mobile ? CONFIDENCE_MIN_TRACKING_MOBILE : CONFIDENCE_MIN_TRACKING;
       const minEyeOpenness = mobile ? 0.01 : 0.02;
       if (features.confidence < minConfidence || features.eyeOpenness < minEyeOpenness) {
         if (shouldLog) logger.log("[Tracking] Düşük confidence/eyeOpenness:", features.confidence.toFixed(2), features.eyeOpenness.toFixed(3));
@@ -856,13 +773,19 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       fixationsByImageRef.current[idx] = fixationDetectorRef.current.getFixations();
       metricsByImageRef.current[idx] = currentMetrics;
       dimensionsByImageRef.current[idx] = imageDimensions;
+      saccadesByImageRef.current[idx] = currentMetrics.saccades;
+      blinkEventsByImageRef.current[idx] = blinkDetectorRef.current.getBlinkEvents();
+      blinkMetricsByImageRef.current[idx] = blinkDetectorRef.current.getMetrics();
 
       const results: ResultPerImage[] = imageUrls.map((url, i) => ({
         imageUrl: url,
         gazePoints: gazePointsByImageRef.current[i] ?? [],
         fixations: fixationsByImageRef.current[i] ?? [],
+        saccades: saccadesByImageRef.current[i] ?? [],
         metrics: metricsByImageRef.current[i] ?? null,
         imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
+        blinkEvents: blinkEventsByImageRef.current[i] ?? [],
+        blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
       if (onTrackingComplete) {
         onTrackingComplete(results, calibrationError);
@@ -1026,6 +949,29 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             total_view_time_ms: m ? Math.round(m.totalViewTime) : 0,
             fixation_count: m?.fixationCount ?? 0,
             avg_fixation_duration_ms: m ? Math.round(m.averageFixationDuration) : 0,
+            saccades: (r.saccades ?? m?.saccades ?? []).map((s) => ({
+              start_x: Math.round(s.startX),
+              start_y: Math.round(s.startY),
+              end_x: Math.round(s.endX),
+              end_y: Math.round(s.endY),
+              start_ms: Math.round(s.startTime),
+              end_ms: Math.round(s.endTime),
+              velocity: Math.round(s.velocity),
+              amplitude: Math.round(s.amplitude),
+              peak_velocity: Math.round(s.peakVelocity),
+              direction_rad: Math.round(s.direction * 1000) / 1000,
+            })),
+            blink_events: (r.blinkEvents ?? []).map((b) => ({
+              start_ms: Math.round(b.startTime),
+              end_ms: Math.round(b.endTime),
+              duration_ms: Math.round(b.duration),
+              min_ear: Math.round(b.minEAR * 1000) / 1000,
+            })),
+            blink_metrics: r.blinkMetrics ? {
+              blink_count: r.blinkMetrics.blinkCount,
+              blink_rate_per_min: Math.round(r.blinkMetrics.blinkRate * 10) / 10,
+              avg_blink_duration_ms: Math.round(r.blinkMetrics.avgBlinkDuration),
+            } : null,
             roi_clusters: (m?.roiClusters ?? []).map((c) => ({
               id: c.id,
               center_x: Math.round(c.centerX),
@@ -1441,221 +1387,3 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   );
 }
 
-/**
- * Gerçek zamanlı kalite göstergesi — tracking sırasında güven seviyesini gösterir.
- * Renk kodları: yeşil=mükemmel, mavi=iyi, sarı=düşük, kırmızı=çok düşük
- */
-function QualityIndicator({
-  faceTracker,
-  isTracking,
-  glassesDetector,
-  onGlassesDetected,
-}: {
-  faceTracker: FaceTracker;
-  isTracking: boolean;
-  glassesDetector: GlassesDetector;
-  onGlassesDetected: (msg: string | null) => void;
-}) {
-  const [quality, setQuality] = useState({ confidence: 0, fps: 0, status: "...", color: "gray" as string });
-  const historyRef = useRef<number[]>([]);
-  const glassesNotifiedRef = useRef(false);
-
-  useEffect(() => {
-    if (!isTracking) return;
-    const interval = setInterval(() => {
-      const features = faceTracker.getLastFeatures();
-      const fps = faceTracker.getFPS();
-      const conf = features?.confidence ?? 0;
-
-      // Son 10 ölçümün ortalaması (anlık sıçramaları yumuşat)
-      historyRef.current.push(conf);
-      if (historyRef.current.length > 10) historyRef.current.shift();
-      const avgConf = historyRef.current.reduce((a, b) => a + b, 0) / historyRef.current.length;
-
-      let status: string;
-      let color: string;
-      if (avgConf >= 0.7) { status = "Mukemmel"; color = "green"; }
-      else if (avgConf >= 0.4) { status = "Iyi"; color = "blue"; }
-      else if (avgConf >= 0.2) { status = "Dusuk"; color = "yellow"; }
-      else { status = "Cok Dusuk"; color = "red"; }
-
-      // Gözlük tespiti (landmarks üzerinden)
-      const landmarks = faceTracker.getLastLandmarks();
-      if (landmarks && landmarks.length > 0) {
-        const detection = glassesDetector.update(landmarks);
-        if (detection.detected && !glassesNotifiedRef.current) {
-          glassesNotifiedRef.current = true;
-          onGlassesDetected(detection.message);
-        }
-      }
-
-      setQuality({ confidence: avgConf, fps, status, color });
-    }, 500);
-    return () => clearInterval(interval);
-  }, [faceTracker, isTracking, glassesDetector, onGlassesDetected]);
-
-  if (!isTracking) return null;
-
-  const colorClasses: Record<string, { bg: string; text: string }> = {
-    green: { bg: "bg-green-500", text: "text-green-400" },
-    blue: { bg: "bg-blue-500", text: "text-blue-400" },
-    yellow: { bg: "bg-yellow-500", text: "text-yellow-400" },
-    red: { bg: "bg-red-500", text: "text-red-400" },
-    gray: { bg: "bg-gray-500", text: "text-gray-400" },
-  };
-
-  const c = colorClasses[quality.color] ?? colorClasses.gray;
-
-  return (
-    <div className="fixed top-4 right-4 z-40 bg-gray-900/90 backdrop-blur rounded-lg px-3 py-2 border border-gray-700 min-w-[110px]">
-      <div className="flex items-center gap-2 mb-1">
-        <div className={`w-2.5 h-2.5 rounded-full ${c.bg} ${quality.color === "red" ? "animate-pulse" : ""}`} />
-        <span className={`text-xs font-semibold ${c.text}`}>{quality.status}</span>
-      </div>
-      <div className="text-[10px] text-gray-500">
-        Guven: {Math.round(quality.confidence * 100)}%
-      </div>
-      {quality.color === "red" && (
-        <p className="text-[10px] text-red-400 mt-1">Yuzunuzu kameraya yaklastirin</p>
-      )}
-      {quality.color === "yellow" && (
-        <p className="text-[10px] text-yellow-400 mt-1">Basinizi sabit tutun</p>
-      )}
-    </div>
-  );
-}
-
-/**
- * Drift düzeltme noktası — görüntüler arası geçişte ekran merkezine bakış doğrulama.
- * 2 saniye boyunca merkez noktaya bakılır, toplanan gaze verisi ile model micro-correction yapar.
- */
-function DriftCorrectionOverlay({
-  model,
-  faceTracker,
-  onDone,
-  photoNum,
-  totalPhotos,
-}: {
-  model: GazeModel;
-  faceTracker: FaceTracker;
-  onDone: () => void;
-  photoNum: number;
-  totalPhotos: number;
-}) {
-  const [progress, setProgress] = useState(0);
-  const gazeCollectorRef = useRef<Array<{ px: number; py: number }>>([]);
-  const animRef = useRef<number>(0);
-  const startTimeRef = useRef(performance.now());
-  const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
-  const DURATION = 2000; // 2 saniye
-  const centerX = typeof window !== "undefined" ? window.innerWidth / 2 : 960;
-  const centerY = typeof window !== "undefined" ? window.innerHeight / 2 : 540;
-
-  useEffect(() => {
-    startTimeRef.current = performance.now();
-    gazeCollectorRef.current = [];
-
-    const loop = () => {
-      const elapsed = performance.now() - startTimeRef.current;
-      setProgress(Math.min(1, elapsed / DURATION));
-
-      // Gaze toplanması
-      const features = faceTracker.getLastFeatures();
-      if (features && features.confidence > 0.2) {
-        const pred = model.predict(features);
-        if (pred) {
-          gazeCollectorRef.current.push({ px: pred.x, py: pred.y });
-        }
-      }
-
-      if (elapsed >= DURATION) {
-        // Toplanan verilerle drift hesapla
-        const samples = gazeCollectorRef.current;
-        if (samples.length >= 5) {
-          const avgX = samples.reduce((s, p) => s + p.px, 0) / samples.length;
-          const avgY = samples.reduce((s, p) => s + p.py, 0) / samples.length;
-          const driftX = centerX - avgX;
-          const driftY = centerY - avgY;
-          // Sadece makul drift ise düzelt (çok büyük drift hatalı veri demek)
-          const maxDrift = Math.min(window.innerWidth, window.innerHeight) * 0.15;
-          if (Math.abs(driftX) < maxDrift && Math.abs(driftY) < maxDrift) {
-            model.applyDriftCorrection(centerX, centerY, avgX, avgY);
-          }
-        }
-        onDoneRef.current();
-        return;
-      }
-
-      animRef.current = requestAnimationFrame(loop);
-    };
-
-    animRef.current = requestAnimationFrame(loop);
-    return () => {
-      if (animRef.current) cancelAnimationFrame(animRef.current);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [model, faceTracker, centerX, centerY]);
-
-  return (
-    <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
-      {/* Merkez nokta */}
-      <div className="relative">
-        <div className="w-10 h-10 rounded-full border-2 border-white/60 flex items-center justify-center">
-          <div className="w-3 h-3 rounded-full bg-white" />
-        </div>
-        {/* Dairesel progress */}
-        <svg className="absolute -inset-2 w-14 h-14" viewBox="0 0 56 56">
-          <circle
-            cx="28" cy="28" r="24"
-            fill="none"
-            stroke="rgba(59,130,246,0.3)"
-            strokeWidth="3"
-          />
-          <circle
-            cx="28" cy="28" r="24"
-            fill="none"
-            stroke="#3b82f6"
-            strokeWidth="3"
-            strokeLinecap="round"
-            strokeDasharray={`${progress * 150.8} 150.8`}
-            transform="rotate(-90 28 28)"
-          />
-        </svg>
-      </div>
-      <div className="absolute bottom-20 text-center">
-        <p className="text-white text-sm font-medium">Merkeze bakin</p>
-        <p className="text-gray-500 text-xs mt-1">
-          Foto {photoNum}/{totalPhotos} — Drift duzeltme
-        </p>
-      </div>
-    </div>
-  );
-}
-
-// Kamera önizleme bileşeni
-function CameraPreview({ faceTracker }: { faceTracker: FaceTracker }) {
-  const previewRef = useRef<HTMLVideoElement>(null);
-
-  useEffect(() => {
-    const video = previewRef.current;
-    const stream = faceTracker.getStream();
-    if (video && stream) {
-      video.srcObject = stream;
-      video.play().catch(() => {});
-    }
-    return () => {
-      if (video) video.srcObject = null;
-    };
-  }, [faceTracker]);
-
-  return (
-    <video
-      ref={previewRef}
-      className="w-full h-full object-cover transform scale-x-[-1]"
-      playsInline
-      muted
-      autoPlay
-    />
-  );
-}
