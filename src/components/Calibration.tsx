@@ -100,9 +100,8 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = isMobileDevice() ? 6000 : 4000; // Hızlı ama yeterli örnek toplar
-    // Duplicate detection: rAF ~60fps ama faceTracker ~30fps, aynı features tekrar okunabilir
-    let lastFeaturesRef: EyeFeatures | null = null;
+    const POINT_TIMEOUT_MS = isMobileDevice() ? 6000 : 5000;
+    const MIN_POINT_DURATION_MS = isMobileDevice() ? 1500 : 2000; // Nokta başına en az 2 saniye
 
     const advanceToNext = async () => {
       samplingRef.current = false;
@@ -115,14 +114,15 @@ export default function Calibration({
         startPointCollection(manager, false);
       } else {
         logger.log("[Calibration] Kalibrasyon tamamlandı, GazePreview'a geçiliyor");
-        // Doğrulama fazı kaldırıldı — GazePreview'da birleşik yapılacak
       }
     };
 
     const sampleLoop = () => {
       if (!samplingRef.current) return;
 
-      if (Date.now() - pointStartTime > POINT_TIMEOUT_MS) {
+      const elapsed = Date.now() - pointStartTime;
+
+      if (elapsed > POINT_TIMEOUT_MS) {
         logger.warn("[Calibration] Nokta zaman aşımı, sonrakine geçiliyor");
         advanceToNext();
         return;
@@ -134,9 +134,6 @@ export default function Calibration({
         return;
       }
 
-      // Duplicate detection kaldırıldı — faceTracker cache'lenmiş frame döndürebiliyor
-
-      // Stability kontrolü kaldırıldı — örneklerin toplanmasını engelliyordu
       prevFeaturesRef.current = features;
       setWarning(null);
 
@@ -144,7 +141,8 @@ export default function Calibration({
       const managerState = manager.getState();
       setSampleProgress(managerState.progress);
 
-      if (isComplete) {
+      // Yeterli örnek toplandı AMA minimum süre dolmadıysa devam et
+      if (isComplete && elapsed >= MIN_POINT_DURATION_MS) {
         advanceToNext();
         return;
       }
