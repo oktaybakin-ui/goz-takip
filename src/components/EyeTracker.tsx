@@ -565,10 +565,13 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     return () => observer.disconnect();
   }, [phase, imageLoaded]);
 
-  // Görüntünün ekrandaki gerçek pozisyonunu al
+  // Görüntünün ekrandaki gerçek pozisyonunu al (border hariç içerik alanı)
   const getImageRect = useCallback((): DOMRect | null => {
     if (!imageContainerRef.current) return null;
-    return imageContainerRef.current.getBoundingClientRect();
+    const rect = imageContainerRef.current.getBoundingClientRect();
+    // border-2 = 2px border, getBoundingClientRect border dahil döner
+    const bw = 2;
+    return new DOMRect(rect.x + bw, rect.y + bw, rect.width - bw * 2, rect.height - bw * 2);
   }, []);
 
   // Tracking başlat

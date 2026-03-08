@@ -944,12 +944,12 @@ export class GazeModel {
     // Sanity check: afin dönüşüm makul mi? (Sorun #7/affine: ölçek + döndürme açısı kontrolü)
     const scaleX = Math.sqrt(wx[0] * wx[0] + wx[1] * wx[1]);
     const scaleY = Math.sqrt(wy[0] * wy[0] + wy[1] * wy[1]);
-    // Rotation angle: atan2 ile hesapla, ~15° üzeri döndürme anormal
+    // Rotation angle: atan2 ile hesapla, ~5° üzeri döndürme anormal
     const rotAngle = Math.abs(Math.atan2(wx[1], wx[0]));
-    const maxRotation = 0.26; // ~15 derece
+    const maxRotation = 0.087; // ~5 derece (göz takipte rotasyon düzeltmesi nadir)
     // Condition number kontrolü (ill-conditioned matris tespiti)
-    const conditionOk = scaleX > 0.01 && scaleY > 0.01 && scaleX / scaleY < 4 && scaleY / scaleX < 4;
-    if (scaleX < 0.5 || scaleX > 2 || scaleY < 0.5 || scaleY > 2 || rotAngle > maxRotation || !conditionOk) {
+    const conditionOk = scaleX > 0.01 && scaleY > 0.01 && scaleX / scaleY < 2 && scaleY / scaleX < 2;
+    if (scaleX < 0.8 || scaleX > 1.2 || scaleY < 0.8 || scaleY > 1.2 || rotAngle > maxRotation || !conditionOk) {
       logger.warn("[GazeModel] Afin düzeltme aşırı ölçek/döndürme tespit etti, sadece ötelemeye düşülüyor",
         { scaleX: scaleX.toFixed(3), scaleY: scaleY.toFixed(3), rotAngle: (rotAngle * 180 / Math.PI).toFixed(1) + "°" });
       const mbx = points.reduce((s, p) => s + (p.trueX - p.predX), 0) / n;

@@ -338,9 +338,9 @@ export class CalibrationManager {
     const point = this.getCurrentPoint();
     if (!point || this.state.phase !== "calibrating") return false;
 
-    // Settle: sadece 3 frame bekle (noktanın render olması için)
+    // Settle: noktaya geçişten sonra göz stabilize olana kadar bekle
     this.currentPointFrameCount++;
-    if (this.currentPointFrameCount <= 3) {
+    if (this.currentPointFrameCount <= this.settleFrames) {
       return false;
     }
 

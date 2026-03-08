@@ -635,8 +635,12 @@ export class FaceTracker {
       confidence *= Math.max(0.1, faceScale / minFaceScale);
     }
 
-    // İris tespit edilemedi
-    if (leftIris.x === 0 && leftIris.y === 0) confidence = 0;
+    // İris tespit edilemedi — fallback (0.5, 0.5) veya (0, 0) kontrolü
+    // getIrisCenter landmark bulamadığında (0.5, 0.5) döner, eski kontrol sadece (0,0) bakıyordu
+    const irisLikelyFailed = (leftIris.x === 0 && leftIris.y === 0) ||
+      (leftIrisStable.x === 0.5 && leftIrisStable.y === 0.5 &&
+       rightIrisStable.x === 0.5 && rightIrisStable.y === 0.5);
+    if (irisLikelyFailed) confidence = 0;
 
     // Sorun #30: Temel occlusion tespiti — iris merkezi göz konturu dışındaysa güven düşür
     // Pupil radius çok küçükse iris kısmen örtülü olabilir (göz kapağı, saç, gözlük)
