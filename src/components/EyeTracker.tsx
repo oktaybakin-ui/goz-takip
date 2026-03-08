@@ -430,15 +430,13 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     transitionPhotoNumRef.current = idx + 1;
     setFixations([]);
     setMetrics(null);
-    // Süreyi ÖNCE sıfırla, sonra interval başlat (race condition önlenir)
+    // Süreyi ÖNCE sıfırla — timer drift correction bitene kadar başlamayacak
     setTrackingDuration(0);
     setShowDriftCorrection(true);
     setCurrentImageIndex(idx + 1);
 
-    // Interval'i state sıfırlandıktan sonra başlat
-    trackingTimerRef.current = setInterval(() => {
-      setTrackingDuration((prev) => prev + 100);
-    }, 100);
+    // Timer'ı drift correction bitene kadar BAŞLATMA
+    // Timer, onDriftDone callback'inde başlatılacak
 
     // Flag'i en son sıfırla (requestAnimationFrame ile bir sonraki frame'e ertele)
     requestAnimationFrame(() => {
@@ -1395,6 +1393,11 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
           onDone={() => {
             setShowDriftCorrection(false);
             setShowTransitionOverlay(true);
+            // Drift correction bitti — şimdi tracking timer'ı başlat
+            if (trackingTimerRef.current) clearInterval(trackingTimerRef.current);
+            trackingTimerRef.current = setInterval(() => {
+              setTrackingDuration((prev) => prev + 100);
+            }, 100);
           }}
         />
       )}
@@ -1527,6 +1530,8 @@ function DriftCorrectionOverlay({
   const gazeCollectorRef = useRef<Array<{ px: number; py: number }>>([]);
   const animRef = useRef<number>(0);
   const startTimeRef = useRef(performance.now());
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
   const DURATION = 2000; // 2 saniye
   const centerX = typeof window !== "undefined" ? window.innerWidth / 2 : 960;
   const centerY = typeof window !== "undefined" ? window.innerHeight / 2 : 540;
@@ -1562,7 +1567,7 @@ function DriftCorrectionOverlay({
             model.applyDriftCorrection(centerX, centerY, avgX, avgY);
           }
         }
-        onDone();
+        onDoneRef.current();
         return;
       }
 
@@ -1573,7 +1578,8 @@ function DriftCorrectionOverlay({
     return () => {
       if (animRef.current) cancelAnimationFrame(animRef.current);
     };
-  }, [model, faceTracker, onDone, centerX, centerY]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [model, faceTracker, centerX, centerY]);
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
