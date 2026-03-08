@@ -697,6 +697,12 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       const dims = imageDimsRef.current;
       const natDims = imageNatDimsRef.current;
 
+      // Ekran sınırlarına soft clamp (model wild extrapolation yapabilir)
+      const screenW = window.innerWidth;
+      const screenH = window.innerHeight;
+      screenPoint.x = Math.max(-screenW * 0.1, Math.min(screenW * 1.1, screenPoint.x));
+      screenPoint.y = Math.max(-screenH * 0.1, Math.min(screenH * 1.1, screenPoint.y));
+
       const imageRectForClamp = getImageRect();
       if (imageRectForClamp) {
         const content = getContentRect(
@@ -720,8 +726,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             const diagSize = Math.sqrt(content.contentW ** 2 + content.contentH ** 2);
             const overDist = Math.sqrt(overX ** 2 + overY ** 2);
 
-            // Mobilde kalibrasyon hatası yüksek → daha toleranslı sınır
-            const boundaryTolerance = mobile ? 0.35 : 0.15;
+            // Toleransı artır — hard reject yerine soft clamp + confidence penalty
+            const boundaryTolerance = mobile ? 0.50 : 0.40;
             if (overDist > diagSize * boundaryTolerance) {
               if (shouldLog) logger.log("[Tracking] İçerik dışı nokta reddedildi:", Math.round(overDist), "px dışarıda");
               return;
@@ -730,7 +736,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             screenPoint.x = Math.max(left, Math.min(right, px));
             screenPoint.y = Math.max(top, Math.min(bottom, py));
             const penalty = Math.min(1, overDist / (diagSize * boundaryTolerance));
-            screenPoint.confidence *= (1 - penalty * 0.6);
+            screenPoint.confidence *= (1 - penalty * 0.7);
           }
         }
       }

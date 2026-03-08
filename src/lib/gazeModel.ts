@@ -762,24 +762,21 @@ export class GazeModel {
       correctedY = raw.y + this.driftOffsetY;
     }
 
-    // Head Pose Compensation (3D decomposition):
-    // gaze_screen = gaze_eye_in_head + head_rotation_projected
-    // Kalibrasyon sırasında eye-in-head öğrenilir; tracking sırasında
-    // baş dönüşü farkı düzeltilir.
-    // Sorun #5: Sert kesme yerine smooth tapering fonksiyonu kullanılıyor.
+    // Head Pose Compensation — çok düşük gain (polinom model zaten yaw/pitch öğreniyor)
+    // Yüksek gain çift düzeltme yapıp tahminleri kaydırıyordu.
+    // Sadece büyük baş hareketlerinde minimal residual düzeltme.
     if (this.refPose) {
       const dYaw = features.yaw - this.refPose.yaw;
       const dPitch = features.pitch - this.refPose.pitch;
 
       const screenW = typeof window !== "undefined" ? window.innerWidth : 1920;
       const screenH = typeof window !== "undefined" ? window.innerHeight : 1080;
-      const headCompX = -dYaw * screenW * 0.35;
-      const headCompY = -dPitch * screenH * 0.30;
+      // Gain düşürüldü: 0.35→0.08, 0.30→0.06 (model zaten yaw/pitch feature'larını kullanıyor)
+      const headCompX = -dYaw * screenW * 0.08;
+      const headCompY = -dPitch * screenH * 0.06;
 
-      // Smooth tapering: küçük açılarda tam düzeltme, büyük açılarda yumuşak azalma
-      // sigmoid benzeri taper: 1→0 arası yumuşak geçiş (sert kesme yerine)
-      const yawLimit = 0.30; // radyan (~17°)
-      const pitchLimit = 0.25; // radyan (~14°)
+      const yawLimit = 0.30;
+      const pitchLimit = 0.25;
       const taperYaw = Math.max(0, 1 - (Math.abs(dYaw) / yawLimit) ** 2);
       const taperPitch = Math.max(0, 1 - (Math.abs(dPitch) / pitchLimit) ** 2);
 
