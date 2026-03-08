@@ -41,7 +41,7 @@ export default function HomePage() {
       setStep("loading_images");
 
       try {
-        const res = await fetch("/api/test/images", { cache: "no-store" });
+        const res = await fetch(`/api/test/images?_t=${Date.now()}`, { cache: "no-store" });
         if (!res.ok) throw new Error("Failed to fetch images");
         const images: TestImage[] = await res.json();
 
