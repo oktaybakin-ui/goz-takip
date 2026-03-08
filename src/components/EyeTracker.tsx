@@ -83,9 +83,9 @@ function screenToImageCoords(
   const rawX = relX * displayWidth;
   const rawY = relY * displayHeight;
 
-  // Görüntü dışındaki noktaları %10 toleransla reddet (sahte köşe fiksasyonları önlenir)
-  const tolX = displayWidth * 0.1;
-  const tolY = displayHeight * 0.1;
+  // Çok uzaktaki noktaları reddet (%50 tolerans), geri kalanı clamp et
+  const tolX = displayWidth * 0.5;
+  const tolY = displayHeight * 0.5;
   if (rawX < -tolX || rawX > displayWidth + tolX || rawY < -tolY || rawY > displayHeight + tolY) {
     return null;
   }
