@@ -13,6 +13,9 @@ export async function GET(request: NextRequest) {
   const status = searchParams.get("status") || "";
   const from = searchParams.get("from") || "";
   const to = searchParams.get("to") || "";
+  const quality = searchParams.get("quality") || "";
+  const minError = searchParams.get("minError") || "";
+  const maxError = searchParams.get("maxError") || "";
 
   let query = supabase
     .from("test_sessions")
@@ -33,6 +36,24 @@ export async function GET(request: NextRequest) {
 
   if (to) {
     query = query.lte("started_at", to + "T23:59:59.999Z");
+  }
+
+  // Kalite filtresi: A(≤50), B(≤75), C(≤110), D(>110)
+  if (quality === "A") {
+    query = query.not("calibration_error_px", "is", null).lte("calibration_error_px", 50);
+  } else if (quality === "B") {
+    query = query.not("calibration_error_px", "is", null).gt("calibration_error_px", 50).lte("calibration_error_px", 75);
+  } else if (quality === "C") {
+    query = query.not("calibration_error_px", "is", null).gt("calibration_error_px", 75).lte("calibration_error_px", 110);
+  } else if (quality === "D") {
+    query = query.not("calibration_error_px", "is", null).gt("calibration_error_px", 110);
+  }
+
+  if (minError) {
+    query = query.gte("calibration_error_px", parseFloat(minError));
+  }
+  if (maxError) {
+    query = query.lte("calibration_error_px", parseFloat(maxError));
   }
 
   const { data, error } = await query.limit(200);

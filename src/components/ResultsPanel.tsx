@@ -10,6 +10,7 @@ import { computeQualityMetrics, QualityMetrics, exportCSV, downloadCSV } from "@
 import { useLang } from "@/contexts/LangContext";
 import HeatmapCanvas from "./HeatmapCanvas";
 import GazeReplay from "./GazeReplay";
+import AOIDrawingTool from "./AOIDrawingTool";
 import type { ResultPerImage } from "@/types/results";
 import { IMAGE_DURATION_MS } from "@/constants";
 
@@ -40,7 +41,7 @@ export default function ResultsPanel({
 }: ResultsPanelProps) {
   const isMulti = Boolean(resultsPerImage && resultsPerImage.length > 0);
   const [selectedPhotoIndex, setSelectedPhotoIndex] = useState(0);
-  const [activeTab, setActiveTab] = useState<"heatmap" | "fixations" | "replay" | "clusters">("heatmap");
+  const [activeTab, setActiveTab] = useState<"heatmap" | "fixations" | "replay" | "clusters" | "aoi">("heatmap");
   const [hasStored, setHasStored] = useState(false);
   const [exportingHeatmapIndex, setExportingHeatmapIndex] = useState<number | null>(null);
   const { t } = useLang();
@@ -235,6 +236,7 @@ export default function ResultsPanel({
     { key: "fixations" as const, label: "Fixation Plot" },
     { key: "replay" as const, label: "Gaze Replay" },
     { key: "clusters" as const, label: "ROI" },
+    { key: "aoi" as const, label: "AOI Analizi" },
   ];
 
   return (
@@ -321,8 +323,19 @@ export default function ResultsPanel({
             />
           )}
 
+          {/* AOI Analizi sekmesi */}
+          {activeTab === "aoi" && (
+            <AOIDrawingTool
+              gazePoints={gazePoints}
+              fixations={selectedFixations}
+              width={imageDimensions.width}
+              height={imageDimensions.height}
+              imageUrl={imageUrl}
+            />
+          )}
+
           {/* Diğer sekmeler: görsel + overlay */}
-          {activeTab !== "replay" && (
+          {activeTab !== "replay" && activeTab !== "aoi" && (
             <div
               className="relative rounded-xl overflow-hidden border border-gray-800 bg-black w-full"
               style={{

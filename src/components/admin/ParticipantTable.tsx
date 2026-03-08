@@ -10,6 +10,9 @@ export default function ParticipantTable() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+  const [qualityFilter, setQualityFilter] = useState("");
+  const [minError, setMinError] = useState("");
+  const [maxError, setMaxError] = useState("");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
 
@@ -18,6 +21,9 @@ export default function ParticipantTable() {
     const params = new URLSearchParams();
     if (search) params.set("search", search);
     if (statusFilter) params.set("status", statusFilter);
+    if (qualityFilter) params.set("quality", qualityFilter);
+    if (minError) params.set("minError", minError);
+    if (maxError) params.set("maxError", maxError);
     if (fromDate) params.set("from", fromDate);
     if (toDate) params.set("to", toDate);
 
@@ -31,7 +37,7 @@ export default function ParticipantTable() {
     } finally {
       setLoading(false);
     }
-  }, [search, statusFilter, fromDate, toDate]);
+  }, [search, statusFilter, qualityFilter, minError, maxError, fromDate, toDate]);
 
   useEffect(() => {
     const timer = setTimeout(fetchData, 300);
@@ -78,6 +84,31 @@ export default function ParticipantTable() {
           <option value="calibration_failed">Kalibrasyon Başarısız</option>
           <option value="abandoned">Terk Edildi</option>
         </select>
+        <select
+          value={qualityFilter}
+          onChange={(e) => setQualityFilter(e.target.value)}
+          className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm focus:outline-none focus:border-blue-500"
+        >
+          <option value="">Tüm kaliteler</option>
+          <option value="A">A (≤50 px)</option>
+          <option value="B">B (≤75 px)</option>
+          <option value="C">C (≤110 px)</option>
+          <option value="D">D (&gt;110 px)</option>
+        </select>
+        <input
+          type="number"
+          placeholder="Min hata (px)"
+          value={minError}
+          onChange={(e) => setMinError(e.target.value)}
+          className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm w-28 focus:outline-none focus:border-blue-500"
+        />
+        <input
+          type="number"
+          placeholder="Max hata (px)"
+          value={maxError}
+          onChange={(e) => setMaxError(e.target.value)}
+          className="px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm w-28 focus:outline-none focus:border-blue-500"
+        />
         <input
           type="date"
           value={fromDate}
@@ -108,6 +139,7 @@ export default function ParticipantTable() {
                 <th className="text-left py-3 px-4">Tarih</th>
                 <th className="text-left py-3 px-4">Foto Sayısı</th>
                 <th className="text-left py-3 px-4">Kal. Hata (px)</th>
+                <th className="text-left py-3 px-4">Kalite</th>
                 <th className="text-left py-3 px-4"></th>
               </tr>
             </thead>
@@ -130,6 +162,23 @@ export default function ParticipantTable() {
                   <td className="py-3 px-4 text-gray-400">{s.image_count}</td>
                   <td className="py-3 px-4 text-gray-400">
                     {s.calibration_error_px?.toFixed(1) ?? "-"}
+                  </td>
+                  <td className="py-3 px-4">
+                    {s.calibration_error_px != null ? (() => {
+                      const err = s.calibration_error_px;
+                      const grade = err <= 50 ? "A" : err <= 75 ? "B" : err <= 110 ? "C" : "D";
+                      const colors = {
+                        A: "bg-green-500/20 text-green-400 border-green-500/30",
+                        B: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+                        C: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+                        D: "bg-red-500/20 text-red-400 border-red-500/30",
+                      };
+                      return (
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-bold border ${colors[grade]}`}>
+                          {grade}
+                        </span>
+                      );
+                    })() : <span className="text-gray-600">-</span>}
                   </td>
                   <td className="py-3 px-4 flex gap-2">
                     <Link

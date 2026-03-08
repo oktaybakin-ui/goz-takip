@@ -21,6 +21,7 @@ import ResultsPanel from "./ResultsPanel";
 import QualityIndicator from "./QualityIndicator";
 import DriftCorrectionOverlay from "./DriftCorrectionOverlay";
 import CameraPreview from "./CameraPreview";
+import HeadPositionIndicator from "./HeadPositionIndicator";
 
 import type { Saccade } from "@/lib/fixation";
 import type { ResultPerImage } from "@/types/results";
@@ -1409,6 +1410,11 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
           glassesDetector={glassesDetectorRef.current}
           onGlassesDetected={setGlassesWarning}
         />
+      )}
+
+      {/* Kafa pozisyonu göstergesi */}
+      {phase === "tracking" && (
+        <HeadPositionIndicator faceTracker={faceTrackerRef.current} />
       )}
 
       {/* Kamera önizleme */}

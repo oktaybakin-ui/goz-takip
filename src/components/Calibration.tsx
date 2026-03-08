@@ -6,6 +6,7 @@ import {
   CalibrationState,
   CalibrationPoint,
   checkStability,
+  GridSize,
 } from "@/lib/calibration";
 import { saveCalibration, loadCalibration } from "@/lib/calibrationStorage";
 import { EyeFeatures, GazeModel } from "@/lib/gazeModel";
@@ -48,6 +49,7 @@ export default function Calibration({
   const phaseRef = useRef<string>("idle");
   const hasAutoTransitionedRef = useRef(false);
   const [storedInfo, setStoredInfo] = useState<ReturnType<typeof loadCalibration>>(null);
+  const [gridSize, setGridSize] = useState<GridSize>("4x4");
   const { t } = useLang();
 
   // Cleanup: unmount olduğunda tüm zamanlayıcı ve frame'leri temizle
@@ -283,15 +285,21 @@ export default function Calibration({
     manager.startCalibration(screenW, screenH);
   }, [model, faceTracker]);
 
+  // Grid boyutu seçildiğinde manager'a ilet
+  const handleGridSizeChange = useCallback((size: GridSize) => {
+    setGridSize(size);
+    managerRef.current?.setGridSize(size);
+  }, []);
+
   // Talimat ekranından kalibrasyon başlat
   const beginCalibration = useCallback(() => {
     const manager = managerRef.current;
     if (!manager) return;
-    logger.log("[Calibration] Kalibrasyon faz başlatılıyor");
+    logger.log("[Calibration] Kalibrasyon faz başlatılıyor, grid:", gridSize);
     manager.beginCalibrationPhase();
     phaseRef.current = "calibrating";
     startPointCollection(manager, false);
-  }, [startPointCollection]);
+  }, [startPointCollection, gridSize]);
 
   const handleComplete = useCallback(() => {
     const manager = managerRef.current;
@@ -336,18 +344,19 @@ export default function Calibration({
     }
   }, [state?.phase, handleSaveCalibration]);
 
-  // Tekrar et
+  // Tekrar et — gridSize'ı koru
   const handleRetry = useCallback(() => {
     const manager = managerRef.current;
     if (!manager) return;
     hasAutoTransitionedRef.current = false;
     manager.reset();
+    manager.setGridSize(gridSize);
     validationErrorsRef.current = [];
     setWarning(null);
     const screenW = window.innerWidth;
     const screenH = window.innerHeight;
     manager.startCalibration(screenW, screenH);
-  }, []);
+  }, [gridSize]);
 
   // RENDER
   if (!state) return null;
@@ -404,6 +413,32 @@ export default function Calibration({
               <span>Nokta kaybolana kadar bekle</span>
             </div>
           </div>
+
+          {/* Grid boyutu seçici — sadece masaüstü */}
+          {!isMobileDevice() && (
+            <div className="flex gap-2 mb-6">
+              <button
+                onClick={() => handleGridSizeChange("4x4")}
+                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition border ${
+                  gridSize === "4x4"
+                    ? "bg-blue-600/20 border-blue-500 text-blue-400"
+                    : "bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500"
+                }`}
+              >
+                Standart (16 nokta)
+              </button>
+              <button
+                onClick={() => handleGridSizeChange("5x5")}
+                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition border ${
+                  gridSize === "5x5"
+                    ? "bg-blue-600/20 border-blue-500 text-blue-400"
+                    : "bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500"
+                }`}
+              >
+                Yüksek Doğruluk (25 nokta)
+              </button>
+            </div>
+          )}
 
           <div className="flex flex-col gap-3">
             <button
