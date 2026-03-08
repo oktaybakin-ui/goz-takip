@@ -344,15 +344,15 @@ export default function Calibration({
     }
   }, [model, state?.meanError]);
 
-  // Model eğitimi bitince (phase=complete) doğrudan analize geç — GazePreview atlanıyor
+  // Model eğitimi bitince (phase=complete) otomatik GazePreview'a geç
+  // hasAutoTransitionedRef: onConfirm sonrası tekrar açılmayı engeller
   useEffect(() => {
     if (state?.phase === "complete" && !hasAutoTransitionedRef.current) {
       hasAutoTransitionedRef.current = true;
       handleSaveCalibration();
-      // GazePreview'u atla, doğrudan handleComplete çağır
-      handleComplete();
+      setShowGazePreview(true);
     }
-  }, [state?.phase, handleSaveCalibration, handleComplete]);
+  }, [state?.phase, handleSaveCalibration]);
 
   // Tekrar et
   const handleRetry = useCallback(() => {

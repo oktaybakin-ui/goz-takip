@@ -26,7 +26,7 @@ const PREVIEW_TARGETS = [
   { x: 0.85, y: 0.85, label: "Sag Alt" },
 ];
 
-const TARGET_DURATION_MS = 2500;
+const TARGET_DURATION_MS = 1500;
 
 /**
  * Kalibrasyon sonrasi canli gaze onizleme + affine correction.
@@ -101,7 +101,7 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
     if (activeTarget >= PREVIEW_TARGETS.length - 1) {
       autoConfirmRef.current = setTimeout(() => {
         onConfirm(computeAffinePointsRef.current());
-      }, 5000);
+      }, 3000);
     }
     return () => {
       if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
@@ -230,7 +230,7 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
             >
               Tekrar Kalibre Et
             </button>
-            <p className="text-gray-600 text-xs">5 saniye icinde otomatik devam edilecek...</p>
+            <p className="text-gray-600 text-xs">3 saniye icinde otomatik devam edilecek...</p>
           </div>
         )}
 
