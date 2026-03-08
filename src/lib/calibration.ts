@@ -336,28 +336,16 @@ export class CalibrationManager {
     const point = this.getCurrentPoint();
     if (!point || this.state.phase !== "calibrating") return false;
 
+    // Settle: sadece 3 frame bekle (noktanın render olması için)
     this.currentPointFrameCount++;
-    if (this.currentPointFrameCount <= this.settleFrames) {
-      const settleProgress = (this.currentPointFrameCount / this.settleFrames) * 10;
-      this.updateState({ progress: settleProgress });
+    if (this.currentPointFrameCount <= 3) {
       return false;
     }
 
-    if (features.confidence < this.MIN_CONFIDENCE_CALIBRATION) return false;
+    // Minimum güven kontrolü — çok düşük eşik, sadece tamamen boş frame'leri atla
+    if (features.confidence < 0.05) return false;
 
-    const avgRelX = (features.leftIrisRelX + features.rightIrisRelX) / 2;
-    const avgRelY = (features.leftIrisRelY + features.rightIrisRelY) / 2;
-    this.recentIrisBuffer.push({ x: avgRelX, y: avgRelY });
-    if (this.recentIrisBuffer.length > this.IRIS_BUFFER_SIZE) this.recentIrisBuffer.shift();
-    if (this.recentIrisBuffer.length >= this.IRIS_BUFFER_SIZE) {
-      const meanX = this.recentIrisBuffer.reduce((s, p) => s + p.x, 0) / this.recentIrisBuffer.length;
-      const meanY = this.recentIrisBuffer.reduce((s, p) => s + p.y, 0) / this.recentIrisBuffer.length;
-      const varX = this.recentIrisBuffer.reduce((s, p) => s + (p.x - meanX) ** 2, 0) / this.recentIrisBuffer.length;
-      const varY = this.recentIrisBuffer.reduce((s, p) => s + (p.y - meanY) ** 2, 0) / this.recentIrisBuffer.length;
-      const stdX = Math.sqrt(varX);
-      const stdY = Math.sqrt(varY);
-      if (stdX > this.IRIS_STD_MAX || stdY > this.IRIS_STD_MAX) return false;
-    }
+    // Tüm iris stabilite filtreleri kaldırıldı — ham veri topla
 
     const sample: CalibrationSample = {
       features,

@@ -145,15 +145,8 @@ export default function Calibration({
       }
       lastFeaturesRef = features;
 
-      const stability = checkStability(features, prevFeaturesRef.current);
+      // Stability kontrolü kaldırıldı — örneklerin toplanmasını engelliyordu
       prevFeaturesRef.current = features;
-
-      if (!stability.faceVisible || !stability.eyesOpen || !stability.headStable) {
-        setWarning(stability.message);
-        animFrameRef.current = requestAnimationFrame(sampleLoop);
-        return;
-      }
-
       setWarning(null);
 
       const isComplete = manager.addSample(features);
