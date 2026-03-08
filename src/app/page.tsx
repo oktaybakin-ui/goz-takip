@@ -41,7 +41,7 @@ export default function HomePage() {
       setStep("loading_images");
 
       try {
-        const res = await fetch("/api/test/images");
+        const res = await fetch("/api/test/images", { cache: "no-store" });
         if (!res.ok) throw new Error("Failed to fetch images");
         const images: TestImage[] = await res.json();
 
@@ -138,7 +138,11 @@ export default function HomePage() {
   if (step === "tracking" && testImages.length > 0) {
     return (
       <EyeTracker
-        imageUrls={testImages.map((img) => img.image_url)}
+        imageUrls={testImages.map((img) => {
+          // Supabase CDN cache'ini kır — admin değişikliklerinin hemen yansıması için
+          const sep = img.image_url.includes("?") ? "&" : "?";
+          return `${img.image_url}${sep}v=${Date.now()}`;
+        })}
         sessionId={sessionId || undefined}
         onTrackingComplete={handleTrackingComplete}
       />

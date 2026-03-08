@@ -14,6 +14,49 @@ interface HeatmapCanvasProps {
   opacity?: number;
 }
 
+/**
+ * WebGL render sonrası canvas'ta gerçekten piksel var mı kontrol et.
+ * Sessiz WebGL hatalarını yakalar (driver/framebuffer sorunları).
+ */
+function isCanvasEmpty(canvas: HTMLCanvasElement): boolean {
+  try {
+    const gl =
+      (canvas.getContext("webgl2") as WebGL2RenderingContext | null) ??
+      (canvas.getContext("webgl") as WebGLRenderingContext | null);
+    if (!gl) return true;
+
+    // Ortadan küçük bir bölge oku
+    const sampleSize = Math.min(4, canvas.width, canvas.height);
+    const sx = Math.max(0, Math.floor(canvas.width / 2) - sampleSize / 2);
+    const sy = Math.max(0, Math.floor(canvas.height / 2) - sampleSize / 2);
+    const pixels = new Uint8Array(sampleSize * sampleSize * 4);
+    gl.readPixels(sx, sy, sampleSize, sampleSize, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+
+    for (let i = 0; i < pixels.length; i++) {
+      if (pixels[i] > 0) return false;
+    }
+
+    // Merkez boş — köşeleri de dene
+    const corners = [
+      [0, 0],
+      [Math.max(0, canvas.width - sampleSize), 0],
+      [0, Math.max(0, canvas.height - sampleSize)],
+      [Math.max(0, canvas.width - sampleSize), Math.max(0, canvas.height - sampleSize)],
+    ];
+    for (const [cx, cy] of corners) {
+      const cpx = new Uint8Array(sampleSize * sampleSize * 4);
+      gl.readPixels(cx, cy, sampleSize, sampleSize, gl.RGBA, gl.UNSIGNED_BYTE, cpx);
+      for (let i = 0; i < cpx.length; i++) {
+        if (cpx[i] > 0) return false;
+      }
+    }
+
+    return true;
+  } catch {
+    return true; // Hata → boş say → 2D'ye düş
+  }
+}
+
 export default function HeatmapCanvas({
   gazePoints,
   fixations,
@@ -40,18 +83,25 @@ export default function HeatmapCanvas({
 
   useEffect(() => {
     if (gazePoints.length === 0 && fixations.length === 0) return;
+    if (width <= 0 || height <= 0) return;
 
     let cancelled = false;
 
-    // WebGL tercih et
+    // WebGL dene
     if (useWebGL && webglRef.current && webglCanvasRef.current) {
       try {
         webglRef.current.render(webglCanvasRef.current, gazePoints, fixations, width, height);
-        return;
+
+        // Doğrulama: WebGL gerçekten piksel üretti mi?
+        if (!isCanvasEmpty(webglCanvasRef.current)) {
+          return; // Başarılı
+        }
+        // Boş çıktı — sessiz WebGL hatası, 2D'ye düş
+        console.warn("[HeatmapCanvas] WebGL render boş çıktı, Canvas 2D fallback");
       } catch {
-        // WebGL başarısız → Canvas 2D fallback'a geç
-        setUseWebGL(false);
+        // Açık hata — 2D'ye düş
       }
+      setUseWebGL(false);
     }
 
     // Canvas 2D fallback
@@ -77,22 +127,19 @@ export default function HeatmapCanvas({
     };
   }, []);
 
-  // WebGL kullanılıyorsa ayrı canvas, değilse 2D canvas
-  if (useWebGL) {
-    return (
+  // Her iki canvas'ı da DOM'da tut — WebGL başarısız olursa 2D hemen kullanılabilir
+  return (
+    <>
       <canvas
         ref={webglCanvasRef}
         className="absolute inset-0 z-20 pointer-events-none"
-        style={{ width, height, opacity }}
+        style={{ width, height, opacity, display: useWebGL ? "block" : "none" }}
       />
-    );
-  }
-
-  return (
-    <canvas
-      ref={canvasRef}
-      className="absolute inset-0 z-20 pointer-events-none"
-      style={{ width, height, opacity }}
-    />
+      <canvas
+        ref={canvasRef}
+        className="absolute inset-0 z-20 pointer-events-none"
+        style={{ width, height, opacity, display: useWebGL ? "none" : "block" }}
+      />
+    </>
   );
 }

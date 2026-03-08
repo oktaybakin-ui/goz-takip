@@ -1326,7 +1326,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             {showHeatmap && (
               <HeatmapCanvas
                 gazePoints={gazePointsRef.current}
-                fixations={fixations}
+                fixations={fixationsRef.current}
                 width={imageDimensions.width}
                 height={imageDimensions.height}
               />
