@@ -204,7 +204,15 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     };
     img.onerror = () => {
       if (cancelled) return;
-      setError("Görüntü yüklenemedi.");
+      // Retry: cache-bust ile tekrar dene
+      if (!img.dataset.retried) {
+        img.dataset.retried = "1";
+        const sep = currentImageUrl.includes("?") ? "&" : "?";
+        img.src = `${currentImageUrl}${sep}_retry=${Date.now()}`;
+        return;
+      }
+      logger.error("[EyeTracker] Görüntü yüklenemedi:", currentImageUrl);
+      setError("Görüntü yüklenemedi. Supabase Storage erişimini ve URL'yi kontrol edin.");
     };
     img.src = currentImageUrl;
     return () => {
