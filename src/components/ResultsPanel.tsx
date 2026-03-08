@@ -346,11 +346,11 @@ export default function ResultsPanel({
               <NextImage src={imageUrl} alt="Analiz" fill unoptimized className="absolute inset-0 w-full h-full object-contain" />
 
               {activeTab === "fixations" && (
-                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-10" />
+                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full z-10 object-contain" />
               )}
 
               {activeTab === "clusters" && (
-                <canvas ref={clusterCanvasRef} className="absolute inset-0 w-full h-full z-10" />
+                <canvas ref={clusterCanvasRef} className="absolute inset-0 w-full h-full z-10 object-contain" />
               )}
 
               {activeTab === "heatmap" && (

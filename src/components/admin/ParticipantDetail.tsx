@@ -159,7 +159,7 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
                   {/* Heatmap overlay — gaze verilerinden client-side render */}
                   <canvas
                     ref={heatmapCanvasRef}
-                    className="absolute inset-0 w-full h-full rounded-lg"
+                    className="absolute inset-0 w-full h-full rounded-lg object-contain"
                     style={{ opacity: 0.6 }}
                   />
                   {/* Fixation points */}
