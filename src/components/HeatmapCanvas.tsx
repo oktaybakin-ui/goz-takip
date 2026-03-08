@@ -132,13 +132,13 @@ export default function HeatmapCanvas({
     <>
       <canvas
         ref={webglCanvasRef}
-        className="absolute inset-0 z-20 pointer-events-none"
-        style={{ width, height, opacity, display: useWebGL ? "block" : "none" }}
+        className="absolute inset-0 w-full h-full z-20 pointer-events-none"
+        style={{ opacity, display: useWebGL ? "block" : "none" }}
       />
       <canvas
         ref={canvasRef}
-        className="absolute inset-0 z-20 pointer-events-none"
-        style={{ width, height, opacity, display: useWebGL ? "none" : "block" }}
+        className="absolute inset-0 w-full h-full z-20 pointer-events-none"
+        style={{ opacity, display: useWebGL ? "none" : "block" }}
       />
     </>
   );
