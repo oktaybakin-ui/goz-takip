@@ -107,6 +107,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const trackingTimerRef = useRef<NodeJS.Timeout | null>(null);
   const autoRecalTimerRef = useRef<NodeJS.Timeout | null>(null);
   const gazePointsRef = useRef<GazePoint[]>([]);
+  const fixationsRef = useRef<Fixation[]>([]);
+  const latestGazeRef = useRef<GazePoint | null>(null);
   const drawAnimRef = useRef<number>(0);
   const lastUiUpdateRef = useRef<number>(0);
   const showTransitionOverlayRef = useRef(false);
@@ -125,6 +127,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const blinkEventsByImageRef = useRef<BlinkEvent[][]>([]);
   const blinkMetricsByImageRef = useRef<(BlinkMetrics | null)[]>([]);
   const advancingRef = useRef(false);
+  // İlk görselin display boyutunu kaydet — tüm görseller bu boyutta gösterilir
+  const firstImageDimsRef = useRef<{ width: number; height: number } | null>(null);
 
   useEffect(() => {
     if (gazePointsByImageRef.current.length !== imageCount) {
@@ -184,9 +188,17 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         width: Math.round(img.naturalWidth * scale),
         height: Math.round(img.naturalHeight * scale),
       };
-      setImageDimensions(dims);
-      if (isMultiImage && currentImageIndex < dimensionsByImageRef.current.length) {
-        dimensionsByImageRef.current[currentImageIndex] = dims;
+      // Çoklu fotoğrafta: ilk görselin display boyutunu kaydet, sonraki tüm görselleri aynı boyutta göster
+      if (isMultiImage) {
+        if (!firstImageDimsRef.current) {
+          firstImageDimsRef.current = dims;
+        }
+        setImageDimensions(firstImageDimsRef.current);
+        if (currentImageIndex < dimensionsByImageRef.current.length) {
+          dimensionsByImageRef.current[currentImageIndex] = firstImageDimsRef.current;
+        }
+      } else {
+        setImageDimensions(dims);
       }
     };
     img.onerror = () => {
@@ -343,6 +355,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
 
     // Önce mutable ref'leri güncelle (state güncellemelerinden önce)
     gazePointsRef.current = [];
+    latestGazeRef.current = null;
     fixationDetectorRef.current = new FixationDetector();
     fixationDetectorRef.current.startTracking();
     blinkDetectorRef.current = new BlinkDetector(
@@ -352,7 +365,14 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     );
     blinkDetectorRef.current.start();
 
+    // Görsel geçişinde model smoothing/filter state'lerini sıfırla
+    // Aksi halde önceki görselin filter state'i yeni görsele "yapışır"
+    modelRef.current.resetSmoothing();
+    if (ensembleRef.current) ensembleRef.current.reset();
+    if (autoRecalRef.current) autoRecalRef.current.reset();
+
     transitionPhotoNumRef.current = idx + 1;
+    fixationsRef.current = [];
     setFixations([]);
     setMetrics(null);
     // Süreyi ÖNCE sıfırla — timer drift correction bitene kadar başlamayacak
@@ -484,6 +504,10 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         width: Math.round(img.naturalWidth * scale),
         height: Math.round(img.naturalHeight * scale),
       };
+      // Çoklu fotoğrafta sabit boyut — firstImageDims'i güncelle
+      if (isMultiImage && firstImageDimsRef.current) {
+        firstImageDimsRef.current = newDims;
+      }
       setImageDimensions(newDims);
     });
     observer.observe(imageContainerRef.current);
@@ -507,6 +531,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     }
     setIsTracking(true);
     setTrackingDuration(0);
+    fixationsRef.current = [];
     setFixations([]);
     gazePointsRef.current = [];
 
@@ -722,7 +747,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         }
         const fixation = fixationDetectorRef.current.addGazePoint(point);
         if (fixation) {
-          setFixations((prev) => [...prev, fixation]);
+          fixationsRef.current = [...fixationsRef.current, fixation];
           
           // Auto-recalibration için fixation kaydet
           if (autoRecalRef.current) {
@@ -730,6 +755,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
           }
         }
       }
+
+      // Her frame'de ref'i güncelle (canvas draw loop için)
+      latestGazeRef.current = point;
 
       const now = performance.now();
       if (now - lastUiUpdateRef.current >= GAZE_UI_THROTTLE_MS) {
@@ -749,6 +777,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   // Tracking durdur
   const stopTracking = useCallback(() => {
     setIsTracking(false);
+    // fixations state'ini ref'ten senkronize et (heatmap/results için)
+    setFixations([...fixationsRef.current]);
 
     if (trackingTimerRef.current) {
       clearInterval(trackingTimerRef.current);
@@ -822,7 +852,10 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     };
   }, [phase, isTracking, startTracking, stopTracking]);
 
-  // Canvas çizimi
+  // Canvas çizimi — tek bir draw loop, ref'lerden okur (state değişikliğiyle yeniden başlamaz)
+  const isTrackingRef = useRef(isTracking);
+  isTrackingRef.current = isTracking;
+
   useEffect(() => {
     if (phase !== "tracking" || !canvasRef.current) return;
 
@@ -838,18 +871,20 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     let frameSkip = 0;
     const draw = () => {
       if (!running) return;
-      
+
       // Skip frames for smoother animation
       frameSkip = (frameSkip + 1) % 2;
-      if (frameSkip === 0 && isTracking) {
+      if (frameSkip === 0 && isTrackingRef.current) {
         drawAnimRef.current = requestAnimationFrame(draw);
         return;
       }
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
+      const currentGaze = latestGazeRef.current;
+
       // Canlı gaze noktası
-      if (gazePoint && isTracking) {
+      if (currentGaze && isTrackingRef.current) {
         // Gaze trail - daha basit (son 5 nokta)
         const recentPoints = gazePointsRef.current.slice(-5);
         if (recentPoints.length > 1) {
@@ -865,7 +900,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
 
         // Gaze noktası
         ctx.beginPath();
-        ctx.arc(gazePoint.x, gazePoint.y, 8, 0, Math.PI * 2);
+        ctx.arc(currentGaze.x, currentGaze.y, 8, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(0, 150, 255, 0.6)";
         ctx.fill();
         ctx.strokeStyle = "rgba(0, 150, 255, 0.9)";
@@ -874,13 +909,15 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
 
         // İç nokta
         ctx.beginPath();
-        ctx.arc(gazePoint.x, gazePoint.y, 3, 0, Math.PI * 2);
+        ctx.arc(currentGaze.x, currentGaze.y, 3, 0, Math.PI * 2);
         ctx.fillStyle = "white";
         ctx.fill();
       }
 
-      // Fixation noktaları
-      for (const fix of fixations) {
+      // Fixation noktaları (ref'ten oku)
+      const currentFixations = fixationsRef.current;
+      for (let i = 0; i < currentFixations.length; i++) {
+        const fix = currentFixations[i];
         const radius = Math.min(20, Math.max(6, fix.duration / 50));
 
         ctx.beginPath();
@@ -908,7 +945,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         cancelAnimationFrame(drawAnimRef.current);
       }
     };
-  }, [phase, gazePoint, fixations, isTracking, imageDimensions]);
+  }, [phase, imageDimensions]);
 
   // Sonuçları dışa aktar (ham gaze + fixation + ROI). Çoklu fotoğrafta tüm görseller tek JSON'da.
   const exportResults = useCallback(() => {
