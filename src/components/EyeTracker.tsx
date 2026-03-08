@@ -79,9 +79,16 @@ function screenToImageCoords(
   const relX = (screenX - contentLeft) / contentW;
   const relY = (screenY - contentTop) / contentH;
 
-  // Piksel koordinatlarına dönüştür, ardından sınırla
+  // Piksel koordinatlarına dönüştür
   const rawX = relX * displayWidth;
   const rawY = relY * displayHeight;
+
+  // Görüntü dışındaki noktaları %10 toleransla reddet (sahte köşe fiksasyonları önlenir)
+  const tolX = displayWidth * 0.1;
+  const tolY = displayHeight * 0.1;
+  if (rawX < -tolX || rawX > displayWidth + tolX || rawY < -tolY || rawY > displayHeight + tolY) {
+    return null;
+  }
 
   const x = Math.max(0, Math.min(displayWidth, rawX));
   const y = Math.max(0, Math.min(displayHeight, rawY));

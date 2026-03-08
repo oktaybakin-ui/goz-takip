@@ -664,8 +664,9 @@ export class FaceTracker {
     const asymBaseY = mobile ? 0.38 : 0.30;
     const asymThreshX = asymBaseX + asymTolerance;
     const asymThreshY = asymBaseY + asymTolerance * 0.5;
-    if (irisAsymX > asymThreshX) confidence *= Math.max(0.3, 1 - (irisAsymX - asymThreshX) * 2);
-    if (irisAsymY > asymThreshY) confidence *= Math.max(0.3, 1 - (irisAsymY - asymThreshY) * 2);
+    // Yumuşak Gaussian ceza (ani düşüş yerine kademeli azalma)
+    if (irisAsymX > asymThreshX) confidence *= Math.max(0.3, Math.exp(-2 * (irisAsymX - asymThreshX) ** 2));
+    if (irisAsymY > asymThreshY) confidence *= Math.max(0.3, Math.exp(-2 * (irisAsymY - asymThreshY) ** 2));
 
     // Debug: Her 120 frame'de bir iris pozisyonlarını logla
     // NOT: frameCount artırılmaz, processFrame() içinde zaten artırılıyor

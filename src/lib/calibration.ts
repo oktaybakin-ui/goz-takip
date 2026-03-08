@@ -95,8 +95,8 @@ export function generateCalibrationPoints(
 /** Grid boyutuna göre adaptif minimum örnek sayısı */
 export function getMinSamplesPerPoint(gridSize: GridSize): number {
   switch (gridSize) {
-    case "5x5": return 25;
-    case "4x4": return 25;  // Varsayılan — agresif zamanlama
+    case "5x5": return 30;
+    case "4x4": return 35;  // ~1.1s, iris stabilize olması için yeterli süre
     case "3x3": return 40;  // Az nokta → her noktada daha çok örnek gerekli
     default: return 25;
   }
@@ -143,9 +143,9 @@ export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: isMobileDevice() ? 0.25 : 0.10,   // Mobilde el titremesi tolere et
-    minConfidence: isMobileDevice() ? 0.08 : 0.3,    // Mobilde kamera kalitesi düşük
-    minEyeOpenness: isMobileDevice() ? 0.05 : 0.12,  // Mobilde gözler daha küçük görünüyor
+    headMovement: isMobileDevice() ? 0.15 : 0.08,   // Daha sıkı baş hareketi kontrolü
+    minConfidence: isMobileDevice() ? 0.15 : 0.25,   // Düşük güvenli frame'leri reddet
+    minEyeOpenness: isMobileDevice() ? 0.06 : 0.12,  // Mobilde gözler daha küçük görünüyor
   }
 ): StabilityCheck {
   if (features.confidence < thresholds.minConfidence) {

@@ -183,11 +183,14 @@ function solveLinearSystem(A: number[][], b: number[]): number[] {
 
 // Outlier temizleme (Her hedef nokta grubu için ayrı IQR)
 function removeOutliers(samples: CalibrationSample[]): CalibrationSample[] {
-  if (samples.length < 50) return samples; // Küçük veri setlerinde outlier temizleme yapma
+  // Düşük güvenli sample'ları önce filtrele
+  const confFiltered = samples.filter(s => s.features.confidence > 0.2);
+  const source = confFiltered.length >= 50 ? confFiltered : samples;
+  if (source.length < 50) return source;
 
   // Hedef noktaya göre grupla
   const groups = new Map<string, CalibrationSample[]>();
-  for (const sample of samples) {
+  for (const sample of source) {
     const key = `${sample.targetX.toFixed(0)}_${sample.targetY.toFixed(0)}`;
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key)!.push(sample);
@@ -225,9 +228,9 @@ function removeOutliers(samples: CalibrationSample[]): CalibrationSample[] {
     const q1 = sorted[Math.floor(sorted.length * 0.25)];
     const q3 = sorted[Math.floor(sorted.length * 0.75)];
     const iqr = q3 - q1;
-    // Adaptif IQR: küçük gruplarda daha geniş tolerans, büyük gruplarda sıkı
-    const iqrMultiplier = groupSamples.length < 10 ? 2.5 :
-                          groupSamples.length < 20 ? 2.0 : 1.5;
+    // Adaptif IQR: küçük gruplarda biraz daha geniş tolerans
+    const iqrMultiplier = groupSamples.length < 10 ? 2.0 :
+                          groupSamples.length < 20 ? 1.5 : 1.5;
     const upperBound = q3 + iqrMultiplier * iqr;
 
     for (let i = 0; i < groupSamples.length; i++) {
@@ -268,7 +271,7 @@ export class OneEuroFilter {
     const confFactor = Math.max(0.3, Math.min(1.0, confidence));
     // Fixation: 0.8Hz (güçlü smoothing), Saccade: 6Hz (hızlı takip)
     this.minCutoff = (0.8 + speedFactor * 5.2) * confFactor;
-    this.beta = (0.008 + speedFactor * 0.09) * confFactor;
+    this.beta = (0.005 + speedFactor * 0.02) * confFactor;
   }
 
   private alpha(cutoff: number, dt: number): number {
@@ -354,8 +357,8 @@ export class GazeModel {
     // One Euro Filter — TEK smoothing katmanı (tüm pipeline'da).
     // minCutoff: düşük = güçlü smoothing (fixation), yüksek = hızlı takip (saccade)
     // beta: hız artınca cutoff ne kadar hızlı yükselsin
-    this.filterX = new OneEuroFilter(1.5, 0.07, 1.0);
-    this.filterY = new OneEuroFilter(1.5, 0.07, 1.0);
+    this.filterX = new OneEuroFilter(1.2, 0.025, 1.0);
+    this.filterY = new OneEuroFilter(1.2, 0.025, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -676,7 +679,9 @@ export class GazeModel {
 
     const normalized = input.map((val, i) => {
       const std = this.featureStds[i] || 1;
-      return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+      const z = std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+      // Polinom patlamasını önle: z-score'u [-3, +3] arasına kliple
+      return Math.max(-3, Math.min(3, z));
     });
     const poly = createSelectivePolynomialFeatures(normalized);
 
@@ -736,8 +741,8 @@ export class GazeModel {
       const dx = raw.x - last.x;
       const dy = raw.y - last.y;
       const dt = (now - last.t) / 1000; // saniye
-      // 300ms'den uzun boşluk → blink/kayıp, velocity'yi sıfırla ve filtreyi resetle
-      if (dt > 0.3) {
+      // 150ms'den uzun boşluk → blink/kayıp, velocity'yi sıfırla ve filtreyi resetle
+      if (dt > 0.15) {
         velocity = 0;
         this.filterX.reset();
         this.filterY.reset();
