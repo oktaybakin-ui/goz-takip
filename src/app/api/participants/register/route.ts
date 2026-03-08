@@ -4,6 +4,18 @@ import { hashTC, validateTCServer } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
 
+// Sınırsız deneme yapabilecek TC hash'leri (test amaçlı)
+const UNLIMITED_TC_HASHES = new Set<string>();
+// Başlangıçta hash'leri hesapla
+const UNLIMITED_TCS = ["11654859098"];
+const initUnlimitedHashes = async () => {
+  for (const tc of UNLIMITED_TCS) {
+    const hash = await hashTC(tc);
+    UNLIMITED_TC_HASHES.add(hash);
+  }
+};
+const _initPromise = initUnlimitedHashes();
+
 export async function POST(request: NextRequest) {
   try {
     const { fullName, tc } = await request.json();
@@ -26,18 +38,24 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (existing) {
-      // Check if they have an incomplete session
-      const { data: activeSessions } = await supabase
-        .from("test_sessions")
-        .select("id, status")
-        .eq("participant_id", existing.id)
-        .in("status", ["completed"]);
+      // Sınırsız TC'ler için completed kontrolünü atla
+      await _initPromise;
+      const isUnlimited = UNLIMITED_TC_HASHES.has(tcHash);
 
-      if (activeSessions && activeSessions.length > 0) {
-        return NextResponse.json(
-          { error: "Bu TC ile daha önce test yapılmıştır." },
-          { status: 409 }
-        );
+      if (!isUnlimited) {
+        // Check if they have a completed session
+        const { data: activeSessions } = await supabase
+          .from("test_sessions")
+          .select("id, status")
+          .eq("participant_id", existing.id)
+          .in("status", ["completed"]);
+
+        if (activeSessions && activeSessions.length > 0) {
+          return NextResponse.json(
+            { error: "Bu TC ile daha önce test yapılmıştır." },
+            { status: 409 }
+          );
+        }
       }
 
       // Create new session for existing participant
