@@ -134,16 +134,7 @@ export default function Calibration({
         return;
       }
 
-      // Duplicate detection: aynı iris pozisyonu = aynı frame, atla
-      if (lastFeaturesRef &&
-          features.leftIrisX === lastFeaturesRef.leftIrisX &&
-          features.leftIrisY === lastFeaturesRef.leftIrisY &&
-          features.rightIrisX === lastFeaturesRef.rightIrisX &&
-          features.rightIrisY === lastFeaturesRef.rightIrisY) {
-        animFrameRef.current = requestAnimationFrame(sampleLoop);
-        return;
-      }
-      lastFeaturesRef = features;
+      // Duplicate detection kaldırıldı — faceTracker cache'lenmiş frame döndürebiliyor
 
       // Stability kontrolü kaldırıldı — örneklerin toplanmasını engelliyordu
       prevFeaturesRef.current = features;
