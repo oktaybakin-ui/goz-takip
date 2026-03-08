@@ -1,7 +1,10 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import StatusBadge from "./StatusBadge";
+import { HeatmapGenerator } from "@/lib/heatmap";
+import type { GazePoint } from "@/lib/gazeModel";
+import type { Fixation } from "@/lib/fixation";
 import type { ImageResultRow, TestSessionWithParticipant } from "@/types/database";
 
 interface SessionDetail {
@@ -17,6 +20,8 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
   const [data, setData] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState(0);
+  const heatmapCanvasRef = useRef<HTMLCanvasElement>(null);
+  const heatmapGenRef = useRef<HeatmapGenerator | null>(null);
 
   useEffect(() => {
     fetch(`/api/admin/sessions/${sessionId}`)
@@ -36,6 +41,34 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
 
   const { session, results } = data;
   const currentResult = results[selectedImage];
+
+  // Gaze verilerinden heatmap oluştur
+  useEffect(() => {
+    if (!currentResult || !heatmapCanvasRef.current) return;
+
+    const gazePoints = (currentResult.gaze_points ?? []) as GazePoint[];
+    const fixations = (currentResult.fixations ?? []) as Fixation[];
+    const width = currentResult.image_width;
+    const height = currentResult.image_height;
+
+    if ((gazePoints.length === 0 && fixations.length === 0) || width <= 0 || height <= 0) {
+      const ctx = heatmapCanvasRef.current.getContext("2d");
+      if (ctx) ctx.clearRect(0, 0, heatmapCanvasRef.current.width, heatmapCanvasRef.current.height);
+      return;
+    }
+
+    if (!heatmapGenRef.current) {
+      heatmapGenRef.current = new HeatmapGenerator();
+    }
+
+    heatmapGenRef.current.render(
+      heatmapCanvasRef.current,
+      gazePoints,
+      fixations,
+      width,
+      height
+    );
+  }, [currentResult]);
 
   return (
     <div>
@@ -121,14 +154,12 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
                     alt={`Foto ${selectedImage + 1}`}
                     className="w-full rounded-lg"
                   />
-                  {/* Heatmap overlay from data_url */}
-                  {currentResult.heatmap_data_url && (
-                    <img
-                      src={currentResult.heatmap_data_url}
-                      alt="Heatmap"
-                      className="absolute inset-0 w-full h-full rounded-lg opacity-60"
-                    />
-                  )}
+                  {/* Heatmap overlay — gaze verilerinden client-side render */}
+                  <canvas
+                    ref={heatmapCanvasRef}
+                    className="absolute inset-0 w-full h-full rounded-lg"
+                    style={{ opacity: 0.6 }}
+                  />
                   {/* Fixation points */}
                   <svg
                     className="absolute inset-0 w-full h-full"

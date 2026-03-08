@@ -128,6 +128,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const blinkEventsByImageRef = useRef<BlinkEvent[][]>([]);
   const blinkMetricsByImageRef = useRef<(BlinkMetrics | null)[]>([]);
   const advancingRef = useRef(false);
+  const pendingCompleteRef = useRef<{ results: ResultPerImage[]; calibrationError: number } | null>(null);
   // İlk görselin display boyutunu kaydet — tüm görseller bu boyutta gösterilir
   const firstImageDimsRef = useRef<{ width: number; height: number } | null>(null);
 
@@ -354,8 +355,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
       if (onTrackingComplete) {
-        onTrackingComplete(results, calibrationError);
-        return;
+        pendingCompleteRef.current = { results, calibrationError };
       }
       setResultsPerImage(results);
       setPhase("results");
@@ -827,8 +827,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
       if (onTrackingComplete) {
-        onTrackingComplete(results, calibrationError);
-        return;
+        pendingCompleteRef.current = { results, calibrationError };
       }
       // Verisi olan sonuçları göster
       const nonEmpty = results.filter(r => r.gazePoints.length > 0 || r.metrics !== null);
@@ -837,8 +836,23 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       }
     }
 
+    // Tek görsel modu: onTrackingComplete desteği
+    if (!isMultiImage && onTrackingComplete) {
+      const singleResult: ResultPerImage = {
+        imageUrl: currentImageUrl,
+        gazePoints: [...gazePointsRef.current],
+        fixations: fixationDetectorRef.current.getFixations(),
+        saccades: currentMetrics.saccades,
+        metrics: currentMetrics,
+        imageDimensions,
+        blinkEvents: blinkDetectorRef.current.getBlinkEvents(),
+        blinkMetrics: blinkDetectorRef.current.getMetrics(),
+      };
+      pendingCompleteRef.current = { results: [singleResult], calibrationError };
+    }
+
     setPhase("results");
-  }, [isMultiImage, currentImageIndex, imageUrls, imageDimensions, onTrackingComplete, calibrationError]);
+  }, [isMultiImage, currentImageIndex, imageUrls, imageDimensions, onTrackingComplete, calibrationError, currentImageUrl]);
 
   // Klavye kısayolları (takip ekranında)
   useEffect(() => {
@@ -1137,6 +1151,15 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     a.click();
   }, [imageDimensions, resultsPerImage, currentImageIndex]);
 
+  // Sonuç ekranında "Testi Tamamla" butonuna basıldığında
+  const handleCompleteTest = useCallback(() => {
+    const pending = pendingCompleteRef.current;
+    if (pending && onTrackingComplete) {
+      pendingCompleteRef.current = null;
+      onTrackingComplete(pending.results, pending.calibrationError);
+    }
+  }, [onTrackingComplete]);
+
   const formatTime = (ms: number) => {
     const seconds = Math.floor(ms / 1000);
     const tenths = Math.floor((ms % 1000) / 100);
@@ -1389,6 +1412,18 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
           onReset={onReset}
           onRecalibrate={() => setPhase("calibration")}
         />
+      )}
+
+      {/* Sonuç ekranında "Testi Tamamla" butonu */}
+      {phase === "results" && onTrackingComplete && (
+        <div className="w-full max-w-7xl mx-auto px-4 pb-8">
+          <button
+            onClick={handleCompleteTest}
+            className="w-full max-w-sm mx-auto block px-8 py-4 bg-green-600 text-white rounded-xl text-lg font-semibold hover:bg-green-500 transition shadow-lg shadow-green-600/20"
+          >
+            Testi Tamamla
+          </button>
+        </div>
       )}
 
       {/* Drift düzeltme overlay (multi-image geçişlerinde) */}
