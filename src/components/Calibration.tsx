@@ -100,7 +100,7 @@ export default function Calibration({
 
   const startCalibrationSampling = useCallback((manager: CalibrationManager) => {
     const pointStartTime = Date.now();
-    const POINT_TIMEOUT_MS = isMobileDevice() ? 6000 : 3500; // Çok agresif — hızlı kalibrasyon
+    const POINT_TIMEOUT_MS = isMobileDevice() ? 6000 : 4000; // Hızlı ama yeterli örnek toplar
     // Duplicate detection: rAF ~60fps ama faceTracker ~30fps, aynı features tekrar okunabilir
     let lastFeaturesRef: EyeFeatures | null = null;
 

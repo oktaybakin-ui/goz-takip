@@ -448,8 +448,8 @@ export class GazeModel {
     // Outlier temizle
     const cleanSamples = removeOutliers(samples);
 
-    if (cleanSamples.length < 80) {
-      throw new Error("Yeterli kalibrasyon verisi yok (en az 80 örnek gerekli – tüm noktaları tamamlayın)");
+    if (cleanSamples.length < 30) {
+      throw new Error("Yeterli kalibrasyon verisi yok (en az 30 örnek gerekli – tüm noktaları tamamlayın)");
     }
 
     // Referans baş pozunu kalibrasyon verilerinin ortalamasından hesapla
@@ -977,8 +977,8 @@ export class GazeModel {
   async trainAsync(samples: CalibrationSample[]): Promise<{ meanError: number; maxError: number }> {
     // Outlier temizle
     const cleanSamples = removeOutliers(samples);
-    if (cleanSamples.length < 80) {
-      throw new Error("Yeterli kalibrasyon verisi yok (en az 80 örnek gerekli)");
+    if (cleanSamples.length < 30) {
+      throw new Error("Yeterli kalibrasyon verisi yok (en az 30 örnek gerekli)");
     }
 
     // Referans poz hesapla
