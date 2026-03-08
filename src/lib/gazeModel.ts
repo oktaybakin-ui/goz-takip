@@ -183,7 +183,7 @@ function solveLinearSystem(A: number[][], b: number[]): number[] {
 
 // Outlier temizleme (Her hedef nokta grubu için ayrı IQR)
 function removeOutliers(samples: CalibrationSample[]): CalibrationSample[] {
-  if (samples.length < 10) return samples;
+  if (samples.length < 50) return samples; // Küçük veri setlerinde outlier temizleme yapma
 
   // Hedef noktaya göre grupla
   const groups = new Map<string, CalibrationSample[]>();
@@ -448,8 +448,8 @@ export class GazeModel {
     // Outlier temizle
     const cleanSamples = removeOutliers(samples);
 
-    if (cleanSamples.length < 30) {
-      throw new Error("Yeterli kalibrasyon verisi yok (en az 30 örnek gerekli – tüm noktaları tamamlayın)");
+    if (cleanSamples.length < 9) {
+      throw new Error("Yeterli kalibrasyon verisi yok (en az 9 örnek gerekli – tüm noktaları tamamlayın)");
     }
 
     // Referans baş pozunu kalibrasyon verilerinin ortalamasından hesapla
