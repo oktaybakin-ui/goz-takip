@@ -270,21 +270,28 @@ export class OneEuroFilter {
    */
   setDynamicParams(velocity: number, confidence: number = 1.0): void {
     // Üç aşamalı hız profili: fixation (<50px/s), pursuit (50-300), saccade (>300)
+    // Confidence-aware: düşük confidence'ta farklı smoothing stratejisi
     const confFactor = Math.max(0.3, Math.min(1.0, confidence));
+
+    // Confidence düşükse velocity eşiklerini de düşür (saccade tespitini kolaylaştır)
+    const velFixThreshold = confidence < 0.4 ? 30 : 50;
+    const velSaccThreshold = confidence < 0.4 ? 200 : 300;
+
     let cutoff: number;
     let beta: number;
-    if (velocity < 50) {
-      // Fixation: güçlü smoothing, düşük beta (jitter azaltma)
-      cutoff = 0.6;
-      beta = 0.002;
-    } else if (velocity < 300) {
+    if (velocity < velFixThreshold) {
+      // Fixation: güçlü smoothing — confidence düşükse daha da agresif
+      cutoff = confidence < 0.4 ? 0.3 : 0.6;
+      beta = confidence < 0.4 ? 0.001 : 0.002;
+    } else if (velocity < velSaccThreshold) {
       // Smooth pursuit: orta smoothing, orta beta
-      const t = (velocity - 50) / 250; // 0→1 arası
+      const range = velSaccThreshold - velFixThreshold;
+      const t = (velocity - velFixThreshold) / range; // 0→1 arası
       cutoff = 0.6 + t * 4.4; // 0.6→5.0
       beta = 0.002 + t * 0.023; // 0.002→0.025
     } else {
       // Saccade: minimal smoothing, yüksek beta (hızlı takip)
-      const t = Math.min((velocity - 300) / 700, 1.0); // 300→1000 arası
+      const t = Math.min((velocity - velSaccThreshold) / 700, 1.0);
       cutoff = 5.0 + t * 7.0; // 5→12
       beta = 0.025 + t * 0.025; // 0.025→0.05
     }
@@ -355,8 +362,14 @@ export class GazeModel {
   private driftOffsetX: number = 0;
   private driftOffsetY: number = 0;
 
-  // Referans baş pozu (kalibrasyon sırasındaki ortalama)
+  // Referans baş pozu (kalibrasyon sırasındaki ortalama + range)
   private refPose: { yaw: number; pitch: number; roll: number; faceScale: number } | null = null;
+  // Kalibrasyon sırasındaki pose aralığı — tracking'de extrapolation tespiti için
+  private poseRange: {
+    minYaw: number; maxYaw: number;
+    minPitch: number; maxPitch: number;
+    yawStd: number; pitchStd: number;
+  } | null = null;
 
   // Head rotation compensation: kalibrasyon sırasında öğrenilen eye-in-head offset
   private eyeInHeadX: number = 0; // Kalibrasyondaki ortalama iris relX (referans)
@@ -499,10 +512,23 @@ export class GazeModel {
     this.eyeInHeadX = cleanSamples.reduce((s, sp) => s + (sp.features.leftIrisRelX + sp.features.rightIrisRelX) / 2, 0) / cleanSamples.length;
     this.eyeInHeadY = cleanSamples.reduce((s, sp) => s + (sp.features.leftIrisRelY + sp.features.rightIrisRelY) / 2, 0) / cleanSamples.length;
 
+    // Kalibrasyon sırasındaki pose range'ini öğren (extrapolation tespiti için)
+    const yaws = cleanSamples.map(s => s.features.yaw);
+    const pitches = cleanSamples.map(s => s.features.pitch);
+    const yawStd = Math.sqrt(yaws.reduce((s, v) => s + (v - refYaw) ** 2, 0) / yaws.length);
+    const pitchStd = Math.sqrt(pitches.reduce((s, v) => s + (v - refPitch) ** 2, 0) / pitches.length);
+    this.poseRange = {
+      minYaw: Math.min(...yaws), maxYaw: Math.max(...yaws),
+      minPitch: Math.min(...pitches), maxPitch: Math.max(...pitches),
+      yawStd: Math.max(yawStd, 0.02), // minimum 0.02 (tamamen sabit duran kullanıcı)
+      pitchStd: Math.max(pitchStd, 0.02),
+    };
+
     logger.log("[GazeModel] Referans poz:", {
       yaw: refYaw.toFixed(3), pitch: refPitch.toFixed(3),
       roll: refRoll.toFixed(3), scale: refScale.toFixed(3),
       eyeInHeadX: this.eyeInHeadX.toFixed(3), eyeInHeadY: this.eyeInHeadY.toFixed(3),
+      poseRange: `yaw[${this.poseRange.minYaw.toFixed(3)},${this.poseRange.maxYaw.toFixed(3)}] pitch[${this.poseRange.minPitch.toFixed(3)},${this.poseRange.maxPitch.toFixed(3)}]`,
     });
 
     const rawInputs = cleanSamples.map((s) => this.featuresToInput(s.features));
@@ -810,13 +836,24 @@ export class GazeModel {
     // Explicit compensation bunun üzerine çift düzeltme yapıp tahminleri kaydırıyordu.
     // Test sonucu: kaldırmak ~4-5% doğruluk artışı sağlıyor.
 
-    // Referans pozdan sapma büyükse confidence düşür (ekstrapolasyon güvensiz)
+    // Pose-range-aware confidence: kalibrasyon range'i dışına çıkıldıkça confidence düşür
+    // Sabit eşik yerine, kalibrasyon sırasındaki varyansa göre adaptif
     let poseConfPenalty = 1.0;
-    if (this.refPose) {
+    if (this.refPose && this.poseRange) {
       const dYaw = Math.abs(features.yaw - this.refPose.yaw);
       const dPitch = Math.abs(features.pitch - this.refPose.pitch);
-      if (dYaw > 0.15) poseConfPenalty *= Math.max(0.3, 1 - (dYaw - 0.15) * 2);
-      if (dPitch > 0.12) poseConfPenalty *= Math.max(0.3, 1 - (dPitch - 0.12) * 2);
+      // Kalibrasyon range'inin kaç sigma dışında?
+      const yawSigma = dYaw / this.poseRange.yawStd;
+      const pitchSigma = dPitch / this.poseRange.pitchStd;
+      // 2 sigma içi: tam güven, 2-4 sigma: kademeli düşüş, 4+ sigma: 0.2 minimum
+      if (yawSigma > 2) poseConfPenalty *= Math.max(0.2, 1 - (yawSigma - 2) * 0.2);
+      if (pitchSigma > 2) poseConfPenalty *= Math.max(0.2, 1 - (pitchSigma - 2) * 0.2);
+    } else if (this.refPose) {
+      // Fallback: range bilgisi yoksa sabit eşik
+      const dYaw = Math.abs(features.yaw - this.refPose.yaw);
+      const dPitch = Math.abs(features.pitch - this.refPose.pitch);
+      if (dYaw > 0.15) poseConfPenalty *= Math.max(0.2, 1 - (dYaw - 0.15) * 2);
+      if (dPitch > 0.12) poseConfPenalty *= Math.max(0.2, 1 - (dPitch - 0.12) * 2);
     }
 
     // Velocity-aware outlier rejection: sadece aşırı sıçramaları reddet (daha az sıkı, veri kaybı azalsın)
@@ -1031,8 +1068,8 @@ export class GazeModel {
     const sampleWeights = cleanSamples.map((s) => {
       const confWeight = Math.max(0.25, s.features.confidence);
       const dist = Math.sqrt((s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2);
-      // Sorun #19: Kenar ağırlığı azaltıldı (0.6→0.35) — overfitting riski düşürülüyor
-      const spatialWeight = 1 + 0.35 * (dist / screenDiag);
+      // Sync training ile tutarlı — SPATIAL_EDGE_WEIGHT kullan
+      const spatialWeight = 1 + SPATIAL_EDGE_WEIGHT * (dist / screenDiag);
       return confWeight * spatialWeight;
     });
 
@@ -1117,9 +1154,9 @@ export class GazeModel {
           Math.max(...targetsY2.map(y => (y - screenCenterY2) ** 2))
         ) || 1;
         const sampleWeights2 = cleanSamples2.map(s => {
-          const confW = Math.max(0.15, s.features.confidence);
+          const confW = Math.max(0.25, s.features.confidence);
           const d = Math.sqrt((s.targetX - screenCenterX2) ** 2 + (s.targetY - screenCenterY2) ** 2);
-          return confW * (1 + 0.6 * (d / screenDiag2));
+          return confW * (1 + SPATIAL_EDGE_WEIGHT * (d / screenDiag2));
         });
         this.weightsX = ridgeRegression(polyFeatures2, targetsX2, this.lambda, sampleWeights2);
         this.weightsY = ridgeRegression(polyFeatures2, targetsY2, this.lambda, sampleWeights2);
@@ -1171,6 +1208,7 @@ export class GazeModel {
       driftOffsetX: this.driftOffsetX,
       driftOffsetY: this.driftOffsetY,
       refPose: this.refPose,
+      poseRange: this.poseRange,
       affineCorrection: this.affineCorrection,
     });
   }
@@ -1199,6 +1237,7 @@ export class GazeModel {
       this.driftOffsetX = data.driftOffsetX ?? 0;
       this.driftOffsetY = data.driftOffsetY ?? 0;
       this.refPose = data.refPose ?? null;
+      this.poseRange = data.poseRange ?? null;
       this.affineCorrection = data.affineCorrection ?? null;
       this.trained = true;
     } catch (err) {

@@ -41,19 +41,22 @@ export class AdvancedIrisDetector {
   private useEllipseFitting: boolean = true;
 
   /**
-   * Deterministik iris tespiti: least-squares circle fit + hafif temporal smoothing
+   * Deterministik iris tespiti: landmark outlier filtresi + circle fit + temporal smoothing
    */
   detectIris(
     eyeLandmarks: Array<{ x: number; y: number }>,
     irisLandmarks: Array<{ x: number; y: number }>,
     eyeType: 'left' | 'right'
   ): IrisFeatures {
-    const basicCenter = this.computeCentroid(irisLandmarks);
+    // Iris landmark outlier filtresi: merkeze çok uzak noktaları bastır
+    const filteredIris = this.filterIrisOutliers(irisLandmarks);
+
+    const basicCenter = this.computeCentroid(filteredIris);
     const eyeBounds = this.computeBoundingBox(eyeLandmarks);
     const eyeWidth = eyeBounds.maxX - eyeBounds.minX;
 
     // Deterministik least-squares circle fit (Kåsa yöntemi — rastgelelik yok)
-    const lsCircle = this.leastSquaresCircleFit(irisLandmarks);
+    const lsCircle = this.leastSquaresCircleFit(filteredIris);
 
     // Sorun #1: Circle fit kalite validasyonu — RMSE eşiği ile düşük kaliteyi reddet
     // Fitness <0.3 ise circle fit güvenilmez, centroid'e daha çok ağırlık ver
@@ -90,17 +93,17 @@ export class AdvancedIrisDetector {
     // Her frame'i öncekiyle karıştırıyordu (alpha=0.35), bakış aralığını daraltıyordu.
     // Artık doğrudan circle fit sonucu kullanılıyor.
 
-    const irisRadius = this.estimateIrisRadius(irisLandmarks, combinedCenter, eyeWidth);
+    const irisRadius = this.estimateIrisRadius(filteredIris, combinedCenter, eyeWidth);
 
     // Confidence: LS fit kalitesi
     const confidence = lsCircle ? lsCircle.fitness : 0.5;
 
-    // Hafif temporal smoothing (sadece 3 frame, hızlı decay — landmark jitter bastırma)
+    // Fitness-adaptive temporal smoothing: düşük kalitede daha fazla smoothing
     const smoothedFeatures = this.temporalSmoothing({
       center: combinedCenter,
       radius: irisRadius,
       confidence
-    }, eyeType);
+    }, eyeType, confidence);
 
     // Ellipse fitting
     let ellipseParams;
@@ -192,13 +195,48 @@ export class AdvancedIrisDetector {
   }
 
   /**
-   * Hafif temporal smoothing — 3 frame, yüksek decay (0.8).
-   * Sadece MediaPipe landmark jitter'ı bastırır, bakış sinyalini bozmaz.
-   * Eski: 12 frame, decay 0.3 → sinyali %70 bastırıyordu.
+   * Iris landmark outlier filtresi: medyan mesafeden çok uzak noktaları ağırlığını düşür.
+   * 5 noktanın 1-2'si hatalı olabilir, bu onları yumuşak şekilde bastırır.
+   */
+  private filterIrisOutliers(points: Array<{ x: number; y: number }>): Array<{ x: number; y: number }> {
+    if (points.length <= 3) return points;
+
+    const centroid = this.computeCentroid(points);
+    const distances = points.map(p =>
+      Math.sqrt((p.x - centroid.x) ** 2 + (p.y - centroid.y) ** 2)
+    );
+
+    // Median mesafe
+    const sorted = [...distances].sort((a, b) => a - b);
+    const medianDist = sorted[Math.floor(sorted.length / 2)];
+
+    // MAD (Median Absolute Deviation)
+    const absDevs = distances.map(d => Math.abs(d - medianDist));
+    const sortedDevs = [...absDevs].sort((a, b) => a - b);
+    const mad = sortedDevs[Math.floor(sortedDevs.length / 2)] || 0.0001;
+
+    // Outlier noktaları tamamen atmak yerine centroid'e çek (soft rejection)
+    return points.map((p, i) => {
+      const modZ = 0.6745 * Math.abs(distances[i] - medianDist) / mad;
+      if (modZ > 3.0) {
+        // Outlier → centroid'e %70 çek (tamamen atmak sinyal kaybı yapar)
+        return {
+          x: p.x * 0.3 + centroid.x * 0.7,
+          y: p.y * 0.3 + centroid.y * 0.7,
+        };
+      }
+      return p;
+    });
+  }
+
+  /**
+   * Fitness-adaptive temporal smoothing — kalite yüksekse hızlı decay (sinyale güven),
+   * kalite düşükse yavaş decay (geçmişe güven, gürültü bastırma).
    */
   private temporalSmoothing(
     current: IrisFeatures,
-    eyeType: 'left' | 'right'
+    eyeType: 'left' | 'right',
+    fitness: number = 0.5
   ): IrisFeatures {
     const history = this.irisHistory.get(eyeType)!;
     history.push(current);
@@ -216,10 +254,15 @@ export class AdvancedIrisDetector {
     let weightedRadius = 0;
     let weightedConfidence = 0;
 
-    // Decay=0.8 (eskiden 0.3): son frame ağırlığı ~1.0, 1 frame öncesi ~0.45, 2 frame öncesi ~0.20
-    // Hızlı decay = güncel veriye yüksek güven = bakış sinyali korunur
+    // Adaptive decay: yüksek fitness (>0.5) → 0.9 decay (sinyale güven)
+    //                  düşük fitness (<0.3) → 0.5 decay (geçmişe güven, gürültü bastır)
+    const decay = 0.5 + Math.min(fitness, 0.8) * 0.5; // 0.5→0.9 arası
+
     history.forEach((features, i) => {
-      const weight = Math.exp(0.8 * (i - history.length + 1));
+      // Confidence-weighted: her frame'in kendi kalitesi de ağırlığa katılır
+      const timeWeight = Math.exp(decay * (i - history.length + 1));
+      const confWeight = Math.max(0.3, features.confidence);
+      const weight = timeWeight * confWeight;
       weightedCenter.x += features.center.x * weight;
       weightedCenter.y += features.center.y * weight;
       weightedRadius += features.radius * weight;

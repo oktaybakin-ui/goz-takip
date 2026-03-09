@@ -29,5 +29,5 @@ export const CONFIDENCE_MIN_FIXATION = 0.15;
 export const CONFIDENCE_MIN_CALIBRATION_SAMPLE = 0.10;
 
 // ─── Spatial Weighting ──────────────────────────────────────────────
-/** Kenar noktası ağırlığı — ilk eğitim ve retrain'de aynı değer. */
-export const SPATIAL_EDGE_WEIGHT = 0.35;
+/** Kenar noktası ağırlığı — düşürüldü: 0.35→0.20 (edge overfitting azaltma). */
+export const SPATIAL_EDGE_WEIGHT = 0.20;

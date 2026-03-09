@@ -211,8 +211,9 @@ export class CalibrationManager {
   private currentPointFrameCount: number = 0;
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
-  private readonly IRIS_BUFFER_SIZE = 5;
-  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.05 : 0.04;    // Sıkılaştırıldı: iris stabilitesi
+  private readonly IRIS_BUFFER_SIZE = 10; // 5→10: daha uzun pencere, medium-term drift yakalama
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.045 : 0.035;  // Sıkılaştırıldı
+  private prevPoseForCalib: { yaw: number; pitch: number } | null = null;
   private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 28 : 30;        // Artırıldı: daha güvenilir ortalama
   private gridSize: GridSize | undefined = undefined;
   private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.15 : 0.35; // Sıkılaştırıldı: düşük kalite veri reddedilir
@@ -348,18 +349,35 @@ export class CalibrationManager {
     // Minimum güven kontrolü — yapılandırılabilir eşik (düşük kalite veri reddedilir)
     if (features.confidence < this.MIN_CONFIDENCE_CALIBRATION) return false;
 
-    // Iris stabilite kontrolü: son N frame'deki iris hareketini kontrol et
-    // Aşırı hareket varsa örnek kalitesiz — atla
+    // Baş poz korelasyonu: frame-to-frame baş hareketi büyükse iris STD eşiğini düşür
+    const poseMovement = this.prevPoseForCalib
+      ? Math.abs(features.yaw - this.prevPoseForCalib.yaw) + Math.abs(features.pitch - this.prevPoseForCalib.pitch)
+      : 0;
+    this.prevPoseForCalib = { yaw: features.yaw, pitch: features.pitch };
+    // Baş hareket ederken iris eşiğini %40 düşür (hareket sırasında alınan veri güvenilmez)
+    const effectiveIrisStdMax = poseMovement > 0.02 ? this.IRIS_STD_MAX * 0.6 : this.IRIS_STD_MAX;
+
+    // Multi-scale iris stabilite kontrolü
     const irisAvg = (features.leftIrisRelX + features.rightIrisRelX) / 2;
     this.recentIrisBuffer.push({ x: irisAvg, y: (features.leftIrisRelY + features.rightIrisRelY) / 2 });
     if (this.recentIrisBuffer.length > this.IRIS_BUFFER_SIZE) this.recentIrisBuffer.shift();
-    if (this.recentIrisBuffer.length >= 3) {
-      // Standart sapma hesapla — yüksekse iris stabil değil
+
+    if (this.recentIrisBuffer.length >= 4) {
+      // Global pencere STD kontrolü (tüm buffer)
       const meanX = this.recentIrisBuffer.reduce((s, p) => s + p.x, 0) / this.recentIrisBuffer.length;
       const meanY = this.recentIrisBuffer.reduce((s, p) => s + p.y, 0) / this.recentIrisBuffer.length;
       const stdX = Math.sqrt(this.recentIrisBuffer.reduce((s, p) => s + (p.x - meanX) ** 2, 0) / this.recentIrisBuffer.length);
       const stdY = Math.sqrt(this.recentIrisBuffer.reduce((s, p) => s + (p.y - meanY) ** 2, 0) / this.recentIrisBuffer.length);
-      if (stdX > this.IRIS_STD_MAX || stdY > this.IRIS_STD_MAX) return false;
+      if (stdX > effectiveIrisStdMax || stdY > effectiveIrisStdMax) return false;
+
+      // Kısa pencere kontrolü (son 4 frame) — ani jitter yakalama
+      const recent4 = this.recentIrisBuffer.slice(-4);
+      const r4meanX = recent4.reduce((s, p) => s + p.x, 0) / 4;
+      const r4meanY = recent4.reduce((s, p) => s + p.y, 0) / 4;
+      const r4stdX = Math.sqrt(recent4.reduce((s, p) => s + (p.x - r4meanX) ** 2, 0) / 4);
+      const r4stdY = Math.sqrt(recent4.reduce((s, p) => s + (p.y - r4meanY) ** 2, 0) / 4);
+      // Kısa pencere eşiği biraz daha toleranslı (henüz stabilize olmayabilir)
+      if (r4stdX > effectiveIrisStdMax * 1.2 || r4stdY > effectiveIrisStdMax * 1.2) return false;
     }
 
     const sample: CalibrationSample = {

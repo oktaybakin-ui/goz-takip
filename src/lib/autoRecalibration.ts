@@ -185,62 +185,113 @@ export class AutoRecalibration {
   }
   
   /**
-   * Update the model if enough time has passed
+   * Update the model if enough time has passed.
+   * İki aşamalı: önce hafif drift correction (hızlı, güvenli), sonra full retrain (yeterli veri varsa)
    */
   updateModel(model: GazeModel): boolean {
     const now = Date.now();
-    
+
     // Check if it's time to update
     if (now - this.lastUpdateTime < this.config.updateInterval) {
       return false;
     }
-    
-    // Need minimum samples for update
+
+    // Aşama 1: Drift correction (en az 8 sample yeterli)
+    if (this.sampleBuffer.length >= 8 && this.sampleBuffer.length < 30) {
+      return this.applyDriftCorrection(model, now);
+    }
+
+    // Aşama 2: Full retrain (30+ sample)
     if (this.sampleBuffer.length < 30) {
       return false;
     }
-    
-    logger.log(`[AutoRecal] Updating model with ${this.sampleBuffer.length} samples`);
-    
+
+    // Önce drift correction dene (daha güvenli)
+    const driftApplied = this.applyDriftCorrection(model, now);
+
+    // Full retrain sadece çok fazla sample birikince (100+)
+    if (this.sampleBuffer.length < 100) {
+      return driftApplied;
+    }
+
+    logger.log(`[AutoRecal] Full retrain with ${this.sampleBuffer.length} samples`);
+
     // Get current model error on buffer
     const beforeError = this.evaluateModel(model, this.sampleBuffer);
-    
+
     // Create a temporary model to test improvement
-    const tempModel = new GazeModel(0.01);
-    
-    // Combine original calibration data with new samples (if available)
-    // Weight recent samples more heavily
-    const weightedSamples = this.sampleBuffer.map((s, i) => ({
-      ...s,
-      weight: 0.5 + 0.5 * (i / this.sampleBuffer.length) // Recent samples weighted more
-    }));
-    
-    // Train temporary model
-    tempModel.train(weightedSamples as CalibrationSample[]);
-    
+    const tempModel = new GazeModel(0.002);
+
+    try {
+      tempModel.train(this.sampleBuffer);
+    } catch {
+      return driftApplied;
+    }
+
     // Evaluate improvement
     const afterError = this.evaluateModel(tempModel, this.sampleBuffer);
     const improvement = (beforeError - afterError) / beforeError;
-    
+
     logger.log(`[AutoRecal] Error before: ${beforeError.toFixed(2)}, after: ${afterError.toFixed(2)}, improvement: ${(improvement * 100).toFixed(1)}%`);
-    
+
     // Only update if there's significant improvement
-    if (improvement > 0.02) { // 2% improvement threshold — daha hassas iyileştirme
-      // Transfer the improved model weights
-      const tempWeights = (tempModel as any).getWeights();
-      if (tempWeights) {
-        (model as any).setWeights(tempWeights);
+    if (improvement > 0.05) { // 5% threshold for full retrain (daha konservatif)
+      const tempWeights = tempModel.getWeights();
+      if (tempWeights.weightsX && tempWeights.weightsY) {
+        model.setWeights({ weightsX: tempWeights.weightsX, weightsY: tempWeights.weightsY });
       }
-      
+
       this.improvementHistory.push(improvement);
       this.lastUpdateTime = now;
-      
-      // Clear old samples after successful update
       this.sampleBuffer = this.sampleBuffer.slice(-50);
-      
+
       return true;
     }
-    
+
+    return driftApplied;
+  }
+
+  /**
+   * Hafif drift correction: sample'ların ortalama sapmasını hesapla ve uygula.
+   * Full retrain'den çok daha güvenli — modeli bozmaz, sadece öteleme düzeltir.
+   */
+  private applyDriftCorrection(model: GazeModel, now: number): boolean {
+    let totalBiasX = 0, totalBiasY = 0, count = 0;
+
+    // Son 20 sample'dan drift hesapla
+    const recentSamples = this.sampleBuffer.slice(-20);
+    for (const sample of recentSamples) {
+      const prediction = model.predict(sample.features);
+      if (prediction) {
+        totalBiasX += sample.targetX - prediction.x;
+        totalBiasY += sample.targetY - prediction.y;
+        count++;
+      }
+    }
+
+    if (count < 5) return false;
+
+    const avgBiasX = totalBiasX / count;
+    const avgBiasY = totalBiasY / count;
+    const biasMagnitude = Math.sqrt(avgBiasX ** 2 + avgBiasY ** 2);
+
+    // Sadece anlamlı drift varsa düzelt (>5px)
+    if (biasMagnitude > 5) {
+      // Mevcut drift'e blend (ani sıçrama yerine kademeli düzeltme)
+      const currentDrift = model.getDriftOffset();
+      const alpha = 0.3; // Blend oranı
+      model.applyDriftCorrection(
+        currentDrift.x + avgBiasX * alpha,
+        currentDrift.y + avgBiasY * alpha,
+        currentDrift.x,
+        currentDrift.y
+      );
+
+      this.lastUpdateTime = now;
+      logger.log(`[AutoRecal] Drift correction: ΔX=${avgBiasX.toFixed(1)}, ΔY=${avgBiasY.toFixed(1)}, magnitude=${biasMagnitude.toFixed(1)}px`);
+      return true;
+    }
+
     return false;
   }
   

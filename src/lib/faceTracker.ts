@@ -122,6 +122,10 @@ export class FaceTracker {
   private advancedIrisDetector: AdvancedIrisDetector;
   private useAdvancedIris: boolean = true;
 
+  // Gözlük tespiti: ardışık frame sayacı (kalıcı gözlük vs geçici yansıma ayrımı)
+  private glassesDetectedFrames: number = 0;
+  private readonly GLASSES_FRAME_THRESHOLD = 10; // 10+ frame → gözlük moduna geç
+
   constructor() {
     // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter
     // tek başına yeterli (çift filtreleme ~80ms gecikme ekliyordu)
@@ -593,6 +597,28 @@ export class FaceTracker {
       if (leftIrisLandmarks.length >= 3 && rightIrisLandmarks.length >= 3) {
         const leftResult = this.advancedIrisDetector.detectIris(leftEyeLandmarks, leftIrisLandmarks, 'left');
         const rightResult = this.advancedIrisDetector.detectIris(rightEyeLandmarks, rightIrisLandmarks, 'right');
+
+        // Gözlük/oklusyon tespiti: iris Z varyansı + circle fit residual
+        const leftIrisZ = LEFT_EYE_INDICES.iris
+          .filter(i => i < landmarks.length && landmarks[i].z !== undefined)
+          .map(i => landmarks[i].z);
+        const rightIrisZ = RIGHT_EYE_INDICES.iris
+          .filter(i => i < landmarks.length && landmarks[i].z !== undefined)
+          .map(i => landmarks[i].z);
+        if (leftIrisZ.length >= 3 && rightIrisZ.length >= 3) {
+          const zRange = (zArr: number[]) => Math.max(...zArr) - Math.min(...zArr);
+          const leftZRange = zRange(leftIrisZ);
+          const rightZRange = zRange(rightIrisZ);
+          // Z range > 0.015 veya circle fit confidence çok düşük → gözlük yansıması muhtemel
+          const glassesLikely = (leftZRange > 0.015 || rightZRange > 0.015) &&
+            (leftResult.confidence < 0.4 || rightResult.confidence < 0.4);
+          if (glassesLikely) {
+            this.glassesDetectedFrames++;
+          } else {
+            this.glassesDetectedFrames = Math.max(0, this.glassesDetectedFrames - 1);
+          }
+        }
+
         leftIrisStable = leftResult.center;
         rightIrisStable = rightResult.center;
       } else {
@@ -657,7 +683,12 @@ export class FaceTracker {
     // Sorun #30: Temel occlusion tespiti — iris merkezi göz konturu dışındaysa güven düşür
     // Pupil radius çok küçükse iris kısmen örtülü olabilir (göz kapağı, saç, gözlük)
     if (pupilRadius > 0 && pupilRadius < 0.005) {
-      confidence *= 0.35; // Çok küçük pupil = iris kısmen örtülü — daha sıkı
+      confidence *= 0.35;
+    }
+
+    // Gözlük tespiti: sürekli Z varyansı yüksekse confidence düşür
+    if (this.glassesDetectedFrames > this.GLASSES_FRAME_THRESHOLD) {
+      confidence *= 0.65; // Gözlük modunda confidence düşür (iris landmark'lar yansımadan etkileniyor)
     }
 
     // İris göreceli pozisyon aşırı uç ise güven düşür — mobilde daha toleranslı
