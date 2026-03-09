@@ -15,18 +15,18 @@ export const GAZE_UI_THROTTLE_MS = 100;
 // ─── EAR (Eye Aspect Ratio) Eşikleri ────────────────────────────────
 /** Göz kırpma EAR eşiği (desktop). Tüm modüller bu değeri kullanır. */
 export const EAR_BLINK_THRESHOLD = 0.18;
-/** Göz kırpma EAR eşiği (mobil — kamera kalitesi düşük). */
-export const EAR_BLINK_THRESHOLD_MOBILE = 0.14;
+/** Göz kırpma EAR eşiği (mobil — düşük çözünürlükte EAR doğal olarak düşük). */
+export const EAR_BLINK_THRESHOLD_MOBILE = 0.11;
 
 // ─── Confidence Eşikleri ─────────────────────────────────────────────
 /** Tracking sırasında minimum confidence (desktop). */
 export const CONFIDENCE_MIN_TRACKING = 0.15;
-/** Tracking sırasında minimum confidence (mobil). */
-export const CONFIDENCE_MIN_TRACKING_MOBILE = 0.05;
+/** Tracking sırasında minimum confidence (mobil — artırıldı, gürültülü veri azaltılır). */
+export const CONFIDENCE_MIN_TRACKING_MOBILE = 0.10;
 /** Fixation detector'da noktayı kabul etmek için minimum confidence. */
 export const CONFIDENCE_MIN_FIXATION = 0.15;
 /** Kalibrasyon sırasında sample toplama minimum confidence. */
-export const CONFIDENCE_MIN_CALIBRATION_SAMPLE = 0.05;
+export const CONFIDENCE_MIN_CALIBRATION_SAMPLE = 0.10;
 
 // ─── Spatial Weighting ──────────────────────────────────────────────
 /** Kenar noktası ağırlığı — ilk eğitim ve retrain'de aynı değer. */

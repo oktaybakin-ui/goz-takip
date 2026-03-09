@@ -230,7 +230,7 @@ export default function Calibration({
       }
 
       const features = faceTracker.getLastFeatures();
-      const valMinConf = isMobileDevice() ? 0.08 : 0.35;
+      const valMinConf = isMobileDevice() ? 0.18 : 0.35;
       if (features && features.confidence > valMinConf) {
         const result = manager.addValidationSample(features);
         if (result) {

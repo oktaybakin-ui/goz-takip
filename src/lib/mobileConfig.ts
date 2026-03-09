@@ -37,18 +37,18 @@ export interface DeviceConfig {
 }
 
 const MOBILE_CONFIG: DeviceConfig = {
-  minCalibrationConfidence: 0.08,
-  minPredictionConfidence: 0.05,
-  minValidationConfidence: 0.08,
-  eyeOpennessThreshold: 0.10,
-  blinkEARThreshold: 0.12,
+  minCalibrationConfidence: 0.15,
+  minPredictionConfidence: 0.10,
+  minValidationConfidence: 0.18,
+  eyeOpennessThreshold: 0.07,
+  blinkEARThreshold: 0.11,
   minFaceScale: 0.06,
-  irisAsymmetryBase: 0.38,
-  headMovementThreshold: 0.25,
-  minEyeOpenness: 0.06,
-  irisStdMax: 0.055,
-  minSamplesPerPoint: 40,
-  velocityThresholdFactor: 0.035,
+  irisAsymmetryBase: 0.20,
+  headMovementThreshold: 0.09,
+  minEyeOpenness: 0.07,
+  irisStdMax: 0.05,
+  minSamplesPerPoint: 28,
+  velocityThresholdFactor: 0.025,
   isMobile: true,
 };
 

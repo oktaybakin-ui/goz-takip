@@ -74,8 +74,8 @@ export function generateCalibrationPoints(
     cols = c;
   } else {
     // Masaustunde 4x4 varsayilan daha iyi dogruluk verir,
-    // mobilde sureyi kisa tutmak icin 3x3 kullan.
-    cols = mobile ? 3 : 4;
+    // mobilde 4x3 (12 nokta) — 3x3'ten daha iyi kapsama, süre makul.
+    cols = mobile ? 4 : 4;
     rows = mobile ? 3 : 4;
   }
 
@@ -144,9 +144,9 @@ export function checkStability(
   features: EyeFeatures,
   prevFeatures: EyeFeatures | null,
   thresholds = {
-    headMovement: isMobileDevice() ? 0.15 : 0.08,   // Daha sıkı baş hareketi kontrolü
-    minConfidence: isMobileDevice() ? 0.15 : 0.25,   // Düşük güvenli frame'leri reddet
-    minEyeOpenness: isMobileDevice() ? 0.06 : 0.12,  // Mobilde gözler daha küçük görünüyor
+    headMovement: isMobileDevice() ? 0.09 : 0.07,    // Sıkılaştırıldı: stabil baş gerekli
+    minConfidence: isMobileDevice() ? 0.20 : 0.25,   // Artırıldı: düşük kalite veri reddi
+    minEyeOpenness: isMobileDevice() ? 0.07 : 0.12,  // Artırıldı: güvenilir göz algılama
   }
 ): StabilityCheck {
   if (features.confidence < thresholds.minConfidence) {
@@ -170,7 +170,7 @@ export function checkStability(
     };
   }
 
-  const prevConfThreshold = isMobileDevice() ? 0.08 : 0.3;
+  const prevConfThreshold = isMobileDevice() ? 0.15 : 0.3;
   if (prevFeatures && prevFeatures.confidence > prevConfThreshold) {
     const yawDiff = Math.abs(features.yaw - prevFeatures.yaw);
     const pitchDiff = Math.abs(features.pitch - prevFeatures.pitch);

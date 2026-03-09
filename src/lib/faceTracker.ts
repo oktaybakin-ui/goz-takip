@@ -138,8 +138,16 @@ export class FaceTracker {
     try {
       // Kamera zaten açıksa tekrar açma
       if (!this.cameraInitialized) {
-        // Önce yüksek çözünürlük dene; mobilde çoğu cihaz 1280x720 desteklemez, fallback kullan
-        const constraintsList: MediaTrackConstraints[] = [
+        // Mobil ve masaüstü için ayrı kamera cascade'i
+        const isMobile = isMobileDevice();
+        const constraintsList: MediaTrackConstraints[] = isMobile ? [
+          // Mobil: 720p hedefle, frameRate daha toleranslı
+          { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30, min: 15 }, facingMode: "user" },
+          { width: { ideal: 960 }, height: { ideal: 720 }, frameRate: { ideal: 30, min: 15 }, facingMode: "user" },
+          { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
+          { facingMode: "user" },
+        ] : [
+          // Masaüstü: 1080p hedefle
           {
             width: { ideal: 1920, min: 1280 },
             height: { ideal: 1080, min: 720 },
@@ -410,11 +418,13 @@ export class FaceTracker {
           }
 
           // Zoom crop — hata geçmişi varsa zoom'u atla (basit frame gönder)
+          // Mobilde de zoom aktif (1.5x) — iris çözünürlüğü artırır
           let sent = false;
+          const mobile = isMobileDevice();
+          const effectiveMaxZoom = mobile ? 1.5 : this.MAX_ZOOM_FACTOR;
           if (
             this.lastEyeBbox &&
-            vw >= 640 &&
-            !isMobileDevice() &&
+            vw >= (mobile ? 480 : 640) &&
             this.zoomDisabledFrames === 0 &&
             this.consecutiveErrors === 0
           ) {
@@ -530,8 +540,10 @@ export class FaceTracker {
       let w = maxX - minX;
       let h = maxY - minY;
       // Max zoom sınırla: çok fazla zoom iris distorsiyonu yapar
-      const minW = 1 / this.MAX_ZOOM_FACTOR;
-      const minH = 1 / this.MAX_ZOOM_FACTOR;
+      // Mobilde 1.5x zoom yeterli (GPU yükü ve distorsiyon dengesi)
+      const zoomLimit = isMobileDevice() ? 1.5 : this.MAX_ZOOM_FACTOR;
+      const minW = 1 / zoomLimit;
+      const minH = 1 / zoomLimit;
       if (w < minW) {
         const cx = (minX + maxX) / 2;
         minX = Math.max(0, cx - minW / 2);
@@ -624,7 +636,7 @@ export class FaceTracker {
 
     // Sorun #9: Tutarlı EAR eşikleri — gazeModel.ts ile senkronize
     // Mobilde kamera açısı ve çözünürlük nedeniyle EAR değerleri daha düşük algılanıyor
-    const eyeOpennessThresh = mobile ? 0.10 : 0.15;
+    const eyeOpennessThresh = mobile ? 0.07 : 0.15;
     if (eyeOpenness < eyeOpennessThresh) {
       confidence *= Math.max(0, eyeOpenness / eyeOpennessThresh);
     }
