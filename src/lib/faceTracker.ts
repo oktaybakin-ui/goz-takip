@@ -644,8 +644,8 @@ export class FaceTracker {
 
     // Sorun #30: Temel occlusion tespiti — iris merkezi göz konturu dışındaysa güven düşür
     // Pupil radius çok küçükse iris kısmen örtülü olabilir (göz kapağı, saç, gözlük)
-    if (pupilRadius > 0 && pupilRadius < 0.004) {
-      confidence *= 0.5; // Çok küçük pupil = iris kısmen örtülü
+    if (pupilRadius > 0 && pupilRadius < 0.005) {
+      confidence *= 0.35; // Çok küçük pupil = iris kısmen örtülü — daha sıkı
     }
 
     // İris göreceli pozisyon aşırı uç ise güven düşür — mobilde daha toleranslı
@@ -660,8 +660,8 @@ export class FaceTracker {
     const irisAsymX = Math.abs(leftRel.x - rightRel.x);
     const irisAsymY = Math.abs(leftRel.y - rightRel.y);
     const asymTolerance = Math.min(Math.abs(headPose.yaw) * 1.5, 0.25);
-    const asymBaseX = mobile ? 0.38 : 0.30;
-    const asymBaseY = mobile ? 0.38 : 0.30;
+    const asymBaseX = mobile ? 0.30 : 0.22;
+    const asymBaseY = mobile ? 0.30 : 0.22;
     const asymThreshX = asymBaseX + asymTolerance;
     const asymThreshY = asymBaseY + asymTolerance * 0.5;
     // Yumuşak Gaussian ceza (ani düşüş yerine kademeli azalma)

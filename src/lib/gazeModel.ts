@@ -270,9 +270,9 @@ export class OneEuroFilter {
     const speedFactor = Math.min(velocity / 500, 1.0);
     // Confidence-weighted: düşük güven = daha fazla smoothing (düşük cutoff)
     const confFactor = Math.max(0.3, Math.min(1.0, confidence));
-    // Fixation: 1.0Hz (güçlü smoothing), Saccade: 6Hz (hızlı takip)
-    this.minCutoff = (1.0 + speedFactor * 5.0) * confFactor;
-    this.beta = (0.005 + speedFactor * 0.02) * confFactor;
+    // Fixation: 0.8Hz (güçlü smoothing), Saccade: 8Hz (hızlı takip)
+    this.minCutoff = (0.8 + speedFactor * 7.2) * confFactor;
+    this.beta = (0.003 + speedFactor * 0.037) * confFactor;
   }
 
   private alpha(cutoff: number, dt: number): number {
@@ -358,8 +358,8 @@ export class GazeModel {
     // One Euro Filter — TEK smoothing katmanı (tüm pipeline'da).
     // minCutoff: düşük = güçlü smoothing (fixation), yüksek = hızlı takip (saccade)
     // beta: hız artınca cutoff ne kadar hızlı yükselsin
-    this.filterX = new OneEuroFilter(1.2, 0.025, 1.0);
-    this.filterY = new OneEuroFilter(1.2, 0.025, 1.0);
+    this.filterX = new OneEuroFilter(1.0, 0.015, 1.0);
+    this.filterY = new OneEuroFilter(1.0, 0.015, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -524,7 +524,7 @@ export class GazeModel {
     // Spatial + confidence weighting: kenar/köşe örnekleri daha yüksek ağırlık alır
     // Bu sayede model kenar bölgelerini daha iyi öğrenir (kalite artışı, ek süre yok)
     const sampleWeights = cleanSamples.map((s) => {
-      const confWeight = Math.max(0.15, s.features.confidence);
+      const confWeight = Math.max(0.25, s.features.confidence);
       const dist = Math.sqrt(
         (s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2
       );
@@ -534,7 +534,7 @@ export class GazeModel {
 
     // Leave-one-group-out CV ile en iyi lambda seç
     // Rastgele fold yerine kalibrasyon noktası bazlı fold → veri sızması yok, daha güvenilir
-    const lambdaCandidates = [0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.012, 0.02, 0.035, 0.05, 0.08, 0.1, 0.15, 0.25];
+    const lambdaCandidates = [0.001, 0.002, 0.004, 0.008, 0.012, 0.02, 0.035, 0.05, 0.08, 0.1, 0.15];
     let bestLambda = this.lambda;
     let bestCV = Infinity;
 
@@ -610,7 +610,7 @@ export class GazeModel {
       return { i, err: rawErr / edgeFactor };
     });
     residuals.sort((a, b) => b.err - a.err);
-    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.12), Math.max(0, cleanSamples.length - 80));
+    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.18), Math.max(0, cleanSamples.length - 80));
     const dropSet = new Set(residuals.slice(0, dropCount).map((r) => r.i));
     if (dropCount > 0) {
       const cleanSamples2 = cleanSamples.filter((_, i) => !dropSet.has(i));
@@ -633,7 +633,7 @@ export class GazeModel {
       const maxDy2 = Math.max(...targetsY2.map(y => Math.abs(y - screenCenterY2)));
       const screenDiag2 = Math.sqrt(maxDx2 ** 2 + maxDy2 ** 2) || 1;
       const sampleWeights2 = cleanSamples2.map((s) => {
-        const confWeight = Math.max(0.15, s.features.confidence);
+        const confWeight = Math.max(0.25, s.features.confidence);
         const dist = Math.sqrt(
           (s.targetX - screenCenterX2) ** 2 + (s.targetY - screenCenterY2) ** 2
         );
@@ -680,8 +680,8 @@ export class GazeModel {
     const normalized = input.map((val, i) => {
       const std = this.featureStds[i] || 1;
       const z = std === 0 ? 0 : (val - this.featureMeans[i]) / std;
-      // Polinom patlamasını önle: z-score'u [-3, +3] arasına kliple
-      return Math.max(-3, Math.min(3, z));
+      // Polinom patlamasını önle: z-score'u [-2.5, +2.5] arasına kliple
+      return Math.max(-2.5, Math.min(2.5, z));
     });
     const poly = createSelectivePolynomialFeatures(normalized);
 
@@ -816,10 +816,9 @@ export class GazeModel {
       const screenMax = typeof window !== "undefined"
         ? Math.max(window.innerWidth, window.innerHeight)
         : 1920;
-      // Gevşek eşik: saccade'ları yemeden sadece aşırı outlier'ları reddet
-      // Mobilde kalibrasyon hatası yüksek → daha toleranslı
-      const baseThreshold = screenMax * (isMobile ? 0.60 : 0.40);
-      const velocityBonus = Math.min(avgVelocity * 200, screenMax * 0.35);
+      // Sıkılaştırılmış eşik: saccade'lara dokunmadan gürültüyü azalt
+      const baseThreshold = screenMax * (isMobile ? 0.45 : 0.30);
+      const velocityBonus = Math.min(avgVelocity * 200, screenMax * 0.30);
       const jumpThreshold = baseThreshold + velocityBonus;
 
       if (dist > jumpThreshold) {
@@ -1009,7 +1008,7 @@ export class GazeModel {
     const screenDiag = Math.sqrt(maxDx ** 2 + maxDy ** 2) || 1;
 
     const sampleWeights = cleanSamples.map((s) => {
-      const confWeight = Math.max(0.15, s.features.confidence);
+      const confWeight = Math.max(0.25, s.features.confidence);
       const dist = Math.sqrt((s.targetX - screenCenterX) ** 2 + (s.targetY - screenCenterY) ** 2);
       // Sorun #19: Kenar ağırlığı azaltıldı (0.6→0.35) — overfitting riski düşürülüyor
       const spatialWeight = 1 + 0.35 * (dist / screenDiag);
@@ -1034,7 +1033,7 @@ export class GazeModel {
     }
 
     try {
-      const lambdaCandidates = [0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.012, 0.02, 0.035, 0.05, 0.08, 0.1, 0.15, 0.25];
+      const lambdaCandidates = [0.001, 0.002, 0.004, 0.008, 0.012, 0.02, 0.035, 0.05, 0.08, 0.1, 0.15];
 
       const input: TrainWorkerInput = {
         type: "train",
@@ -1073,7 +1072,7 @@ export class GazeModel {
         return { i, err: rawErr / edgeFactor };
       });
       residuals.sort((a, b) => b.err - a.err);
-      const dropCount = Math.min(Math.floor(cleanSamples.length * 0.12), Math.max(0, cleanSamples.length - 80));
+      const dropCount = Math.min(Math.floor(cleanSamples.length * 0.18), Math.max(0, cleanSamples.length - 80));
 
       if (dropCount > 0) {
         const dropSet = new Set(residuals.slice(0, dropCount).map(r => r.i));

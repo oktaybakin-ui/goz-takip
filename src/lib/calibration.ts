@@ -212,18 +212,18 @@ export class CalibrationManager {
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
   private readonly IRIS_BUFFER_SIZE = 5;
-  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.07 : 0.06;    // Çok gevşek — neredeyse hep geçer
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 20 : 20;        // 3x3: 9 nokta × 20 = 180 örnek
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.05 : 0.04;    // Sıkılaştırıldı: iris stabilitesi
+  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 28 : 30;        // Artırıldı: daha güvenilir ortalama
   private gridSize: GridSize | undefined = undefined;
-  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.08 : 0.25; // Çok gevşek
-  private readonly RETRY_QUALITY_THRESHOLD = 0; // Retry tamamen kapalı
+  private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.15 : 0.35; // Sıkılaştırıldı: düşük kalite veri reddedilir
+  private readonly RETRY_QUALITY_THRESHOLD = 3; // Kalite < 3 ise retry
   private pointQuality: Map<number, number> = new Map();
   private retryQueue: number[] = [];
   private retryAttempts: Map<number, number> = new Map();
-  private readonly MAX_RETRIES_PER_POINT = 0;
-  // Retry tamamen devre dışı
+  private readonly MAX_RETRIES_PER_POINT = 1;
+  // Düşük kaliteli noktalar için retry aktif
   private totalRetryCount: number = 0;
-  private readonly MAX_TOTAL_RETRIES = 0;
+  private readonly MAX_TOTAL_RETRIES = 3;
 
   // Bölgesel kalite haritası (ekranın hangi bölgelerinde hata yüksek)
   private regionErrors: Map<string, number[]> = new Map();

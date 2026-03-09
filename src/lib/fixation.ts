@@ -138,14 +138,14 @@ export class FixationDetector {
         : 2203 // 1920x1080 default
     );
 
-    // Ekran boyutuna normalize edilmiş parametreler (Sorun #6, #18)
-    this.velocityThreshold = velocityThreshold > 0 ? velocityThreshold : diag * 0.03;
+    // Ekran boyutuna normalize edilmiş parametreler — sıkılaştırıldı
+    this.velocityThreshold = velocityThreshold > 0 ? velocityThreshold : diag * 0.025;
     this.minFixationDuration = minFixationDuration;
-    this.maxFixationRadius = maxFixationRadius > 0 ? maxFixationRadius : diag * 0.022;
-    this.dbscanEps = dbscanEps > 0 ? dbscanEps : diag * 0.02;
+    this.maxFixationRadius = maxFixationRadius > 0 ? maxFixationRadius : diag * 0.018;
+    this.dbscanEps = dbscanEps > 0 ? dbscanEps : diag * 0.018;
     this.dbscanMinPts = dbscanMinPts;
     this.mode = mode;
-    this.maxDispersion = maxDispersion > 0 ? maxDispersion : diag * 0.02;
+    this.maxDispersion = maxDispersion > 0 ? maxDispersion : diag * 0.016;
     this.idtMinDuration = idtMinDuration;
     this.maxAcceleration = maxAcceleration;
   }

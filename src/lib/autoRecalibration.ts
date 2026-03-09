@@ -41,10 +41,10 @@ export class AutoRecalibration {
   
   constructor(config?: Partial<RecalibrationConfig>) {
     this.config = {
-      minFixationDuration: 500,
-      minConfidence: 0.7,
+      minFixationDuration: 300,
+      minConfidence: 0.50,
       bufferSize: 200,
-      updateInterval: 30000, // 30 seconds
+      updateInterval: 15000, // 15 seconds — daha sık güncelleme
       clickRadius: 100,
       uiElementTracking: true,
       ...config
@@ -196,7 +196,7 @@ export class AutoRecalibration {
     }
     
     // Need minimum samples for update
-    if (this.sampleBuffer.length < 50) {
+    if (this.sampleBuffer.length < 30) {
       return false;
     }
     
@@ -225,7 +225,7 @@ export class AutoRecalibration {
     logger.log(`[AutoRecal] Error before: ${beforeError.toFixed(2)}, after: ${afterError.toFixed(2)}, improvement: ${(improvement * 100).toFixed(1)}%`);
     
     // Only update if there's significant improvement
-    if (improvement > 0.05) { // 5% improvement threshold
+    if (improvement > 0.02) { // 2% improvement threshold — daha hassas iyileştirme
       // Transfer the improved model weights
       const tempWeights = (tempModel as any).getWeights();
       if (tempWeights) {
