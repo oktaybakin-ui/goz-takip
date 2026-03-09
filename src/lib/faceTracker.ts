@@ -672,8 +672,8 @@ export class FaceTracker {
     const irisAsymX = Math.abs(leftRel.x - rightRel.x);
     const irisAsymY = Math.abs(leftRel.y - rightRel.y);
     const asymTolerance = Math.min(Math.abs(headPose.yaw) * 1.5, 0.25);
-    const asymBaseX = mobile ? 0.30 : 0.22;
-    const asymBaseY = mobile ? 0.30 : 0.22;
+    const asymBaseX = mobile ? 0.22 : 0.20;
+    const asymBaseY = mobile ? 0.22 : 0.20;
     const asymThreshX = asymBaseX + asymTolerance;
     const asymThreshY = asymBaseY + asymTolerance * 0.5;
     // Yumuşak Gaussian ceza (ani düşüş yerine kademeli azalma)

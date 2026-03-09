@@ -59,20 +59,21 @@ export class AdvancedIrisDetector {
     // Fitness <0.3 ise circle fit güvenilmez, centroid'e daha çok ağırlık ver
     let combinedCenter: { x: number; y: number };
     if (lsCircle) {
-      // Circle fit kalitesine göre ağırlık ayarla
+      // Circle fit kalitesine göre ağırlık ayarla — sıkılaştırılmış eşikler
       const fitQuality = Math.max(0, Math.min(1, lsCircle.fitness));
       // Yüksek fitness → LS ağırlığı yüksek, düşük fitness → centroid ağırlığı yüksek
-      const lsWeight = fitQuality > 0.5 ? 0.75 : fitQuality > 0.3 ? 0.5 : 0.2;
+      // 0.6+ = güvenilir circle fit, 0.4-0.6 = orta, <0.4 = centroid'e güven
+      const lsWeight = fitQuality > 0.6 ? 0.80 : fitQuality > 0.4 ? 0.55 : 0.15;
       const centroidWeight = 1 - lsWeight;
 
-      // Circle merkezi göz sınırları dışındaysa reddet
+      // Circle merkezi göz sınırları dışındaysa reddet — daha sıkı sınırlar
       const centerInBounds =
-        lsCircle.x >= eyeBounds.minX - eyeWidth * 0.2 &&
-        lsCircle.x <= eyeBounds.maxX + eyeWidth * 0.2 &&
-        lsCircle.y >= eyeBounds.minY - eyeWidth * 0.2 &&
-        lsCircle.y <= eyeBounds.maxY + eyeWidth * 0.2;
+        lsCircle.x >= eyeBounds.minX - eyeWidth * 0.15 &&
+        lsCircle.x <= eyeBounds.maxX + eyeWidth * 0.15 &&
+        lsCircle.y >= eyeBounds.minY - eyeWidth * 0.15 &&
+        lsCircle.y <= eyeBounds.maxY + eyeWidth * 0.15;
 
-      if (centerInBounds && fitQuality > 0.15) {
+      if (centerInBounds && fitQuality > 0.30) {
         combinedCenter = {
           x: basicCenter.x * centroidWeight + lsCircle.x * lsWeight,
           y: basicCenter.y * centroidWeight + lsCircle.y * lsWeight

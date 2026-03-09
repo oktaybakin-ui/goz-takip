@@ -345,10 +345,22 @@ export class CalibrationManager {
       return false;
     }
 
-    // Minimum güven kontrolü — çok düşük eşik, sadece tamamen boş frame'leri atla
-    if (features.confidence < CONFIDENCE_MIN_CALIBRATION_SAMPLE) return false;
+    // Minimum güven kontrolü — yapılandırılabilir eşik (düşük kalite veri reddedilir)
+    if (features.confidence < this.MIN_CONFIDENCE_CALIBRATION) return false;
 
-    // Tüm iris stabilite filtreleri kaldırıldı — ham veri topla
+    // Iris stabilite kontrolü: son N frame'deki iris hareketini kontrol et
+    // Aşırı hareket varsa örnek kalitesiz — atla
+    const irisAvg = (features.leftIrisRelX + features.rightIrisRelX) / 2;
+    this.recentIrisBuffer.push({ x: irisAvg, y: (features.leftIrisRelY + features.rightIrisRelY) / 2 });
+    if (this.recentIrisBuffer.length > this.IRIS_BUFFER_SIZE) this.recentIrisBuffer.shift();
+    if (this.recentIrisBuffer.length >= 3) {
+      // Standart sapma hesapla — yüksekse iris stabil değil
+      const meanX = this.recentIrisBuffer.reduce((s, p) => s + p.x, 0) / this.recentIrisBuffer.length;
+      const meanY = this.recentIrisBuffer.reduce((s, p) => s + p.y, 0) / this.recentIrisBuffer.length;
+      const stdX = Math.sqrt(this.recentIrisBuffer.reduce((s, p) => s + (p.x - meanX) ** 2, 0) / this.recentIrisBuffer.length);
+      const stdY = Math.sqrt(this.recentIrisBuffer.reduce((s, p) => s + (p.y - meanY) ** 2, 0) / this.recentIrisBuffer.length);
+      if (stdX > this.IRIS_STD_MAX || stdY > this.IRIS_STD_MAX) return false;
+    }
 
     const sample: CalibrationSample = {
       features,
