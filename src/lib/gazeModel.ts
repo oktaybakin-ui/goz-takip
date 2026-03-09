@@ -41,6 +41,9 @@ export interface EyeFeatures {
   confidence: number;
   // Blink durumu (BlinkDetector tarafından ayarlanır)
   isBlinking?: boolean;
+  // İris elips bilgisi (perspektif deformasyon ölçümü)
+  irisEccentricity?: number;    // Ortalama iris elips eccentricity (0=daire, 1=çizgi)
+  eccentricityAsym?: number;     // Sol-sağ eccentricity farkı
 }
 
 export interface GazePoint {
@@ -456,6 +459,8 @@ export class GazeModel {
       normAvgRelX,      // [16] IPD-normalized iris X
       normAvgRelY,      // [17] IPD-normalized iris Y
       eyeAspect,        // [18] göz açıklık/genişlik oranı
+      features.irisEccentricity ?? 0,  // [19] iris elips eccentricity (perspektif bilgisi)
+      features.eccentricityAsym ?? 0,  // [20] sol-sağ eccentricity farkı
     ];
   }
 
@@ -559,11 +564,15 @@ export class GazeModel {
     this.computeNormalization(rawInputs);
 
     // Polinom özellikleri (2. + 3. derece iris terimleri) ve normalize et
+    // KRİTİK: predictRaw ile AYNI soft tanh clipping uygulanmalı (training/inference tutarlılığı)
     const polyFeatures: number[][] = [];
     for (const input of rawInputs) {
       const normalized = input.map((val, i) => {
         const std = this.featureStds[i] || 1;
-        return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+        const z = std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+        if (Math.abs(z) <= 2.5) return z;
+        const sign = z > 0 ? 1 : -1;
+        return sign * (2.5 + Math.tanh(z - sign * 2.5));
       });
       polyFeatures.push(createSelectivePolynomialFeatures(normalized));
     }
@@ -680,7 +689,10 @@ export class GazeModel {
       for (const input of rawInputs2) {
         const normalized = input.map((val, i) => {
           const std = this.featureStds[i] || 1;
-          return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+          const z = std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+          if (Math.abs(z) <= 2.5) return z;
+          const sign = z > 0 ? 1 : -1;
+          return sign * (2.5 + Math.tanh(z - sign * 2.5));
         });
         polyFeatures2.push(createSelectivePolynomialFeatures(normalized));
       }
@@ -726,8 +738,8 @@ export class GazeModel {
     };
   }
 
-  // Ham tahmin (smoothing yok)
-  private predictRaw(features: EyeFeatures): { x: number; y: number } | null {
+  // Ham tahmin (smoothing yok) — ensemble'dan da erişilebilir
+  predictRaw(features: EyeFeatures): { x: number; y: number } | null {
     if (!this.trained || !this.weightsX || !this.weightsY) return null;
 
     const input = this.featuresToInput(features);
@@ -762,6 +774,57 @@ export class GazeModel {
     }
 
     return { x, y };
+  }
+
+  /**
+   * Raw prediction + affine/drift correction (filter yok).
+   * Ensemble bu metodu kullanır — filter ensemble seviyesinde uygulanır.
+   */
+  predictRawCorrected(features: EyeFeatures): { x: number; y: number; confidence: number } | null {
+    // Blink / confidence kontrolleri
+    if (features.isBlinking === true) return null;
+    const avgEAR = (features.leftEAR + features.rightEAR) / 2;
+    const isMobile = typeof window !== "undefined" && (
+      /Android|iPhone|iPad|iPod/i.test(navigator?.userAgent ?? "") ||
+      (window.screen.width <= 768 && "ontouchstart" in window)
+    );
+    const blinkEARThreshold = isMobile ? EAR_BLINK_THRESHOLD_MOBILE : EAR_BLINK_THRESHOLD;
+    if (features.isBlinking === undefined && avgEAR < blinkEARThreshold) return null;
+    const minPredictConf = isMobile ? CONFIDENCE_MIN_TRACKING_MOBILE : CONFIDENCE_MIN_TRACKING;
+    if (features.confidence < minPredictConf) return null;
+
+    const raw = this.predictRaw(features);
+    if (!raw) return null;
+
+    // Affine veya drift correction
+    let correctedX: number;
+    let correctedY: number;
+    if (this.affineCorrection) {
+      const { a11, a12, tx, a21, a22, ty } = this.affineCorrection;
+      correctedX = a11 * raw.x + a12 * raw.y + tx;
+      correctedY = a21 * raw.x + a22 * raw.y + ty;
+    } else {
+      correctedX = raw.x + this.driftOffsetX;
+      correctedY = raw.y + this.driftOffsetY;
+    }
+
+    // Pose confidence penalty
+    let poseConfPenalty = 1.0;
+    if (this.refPose && this.poseRange) {
+      const dYaw = Math.abs(features.yaw - this.refPose.yaw);
+      const dPitch = Math.abs(features.pitch - this.refPose.pitch);
+      const yawSigma = dYaw / this.poseRange.yawStd;
+      const pitchSigma = dPitch / this.poseRange.pitchStd;
+      if (yawSigma > 2) poseConfPenalty *= Math.max(0.2, 1 - (yawSigma - 2) * 0.2);
+      if (pitchSigma > 2) poseConfPenalty *= Math.max(0.2, 1 - (pitchSigma - 2) * 0.2);
+    } else if (this.refPose) {
+      const dYaw = Math.abs(features.yaw - this.refPose.yaw);
+      const dPitch = Math.abs(features.pitch - this.refPose.pitch);
+      if (dYaw > 0.15) poseConfPenalty *= Math.max(0.2, 1 - (dYaw - 0.15) * 2);
+      if (dPitch > 0.12) poseConfPenalty *= Math.max(0.2, 1 - (dPitch - 0.12) * 2);
+    }
+
+    return { x: correctedX, y: correctedY, confidence: features.confidence * poseConfPenalty };
   }
 
   /**
@@ -1047,6 +1110,22 @@ export class GazeModel {
     const refScale = cleanSamples.reduce((s, sp) => s + sp.features.faceScale, 0) / cleanSamples.length;
     this.refPose = { yaw: refYaw, pitch: refPitch, roll: refRoll, faceScale: refScale };
 
+    // Eye-in-head referans (sync train ile tutarlı)
+    this.eyeInHeadX = cleanSamples.reduce((s, sp) => s + (sp.features.leftIrisRelX + sp.features.rightIrisRelX) / 2, 0) / cleanSamples.length;
+    this.eyeInHeadY = cleanSamples.reduce((s, sp) => s + (sp.features.leftIrisRelY + sp.features.rightIrisRelY) / 2, 0) / cleanSamples.length;
+
+    // Pose range hesapla (sync train ile tutarlı — extrapolation tespiti için)
+    const yaws = cleanSamples.map(s => s.features.yaw);
+    const pitches = cleanSamples.map(s => s.features.pitch);
+    const yawStd = Math.sqrt(yaws.reduce((s, v) => s + (v - refYaw) ** 2, 0) / yaws.length);
+    const pitchStd = Math.sqrt(pitches.reduce((s, v) => s + (v - refPitch) ** 2, 0) / pitches.length);
+    this.poseRange = {
+      minYaw: Math.min(...yaws), maxYaw: Math.max(...yaws),
+      minPitch: Math.min(...pitches), maxPitch: Math.max(...pitches),
+      yawStd: Math.max(yawStd, 0.02),
+      pitchStd: Math.max(pitchStd, 0.02),
+    };
+
     const rawInputs = cleanSamples.map((s) => this.featuresToInput(s.features));
     const validMask = rawInputs.map(row => row.every(v => isFinite(v)));
     if (validMask.some(v => !v)) {
@@ -1141,7 +1220,10 @@ export class GazeModel {
         for (const inp of rawInputs2) {
           const normalized = inp.map((val, i) => {
             const std = this.featureStds[i] || 1;
-            return std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+            const z = std === 0 ? 0 : (val - this.featureMeans[i]) / std;
+            if (Math.abs(z) <= 2.5) return z;
+            const sign = z > 0 ? 1 : -1;
+            return sign * (2.5 + Math.tanh(z - sign * 2.5));
           });
           polyFeatures2.push(createSelectivePolynomialFeatures(normalized));
         }
@@ -1194,7 +1276,7 @@ export class GazeModel {
   }
 
   // Model format versiyonu — feature boyutu veya yapısı değişirse artırılır (Sorun #17)
-  private static readonly MODEL_VERSION = 3; // v3: IPD normalizasyonu + eyeAspect eklendi (19 feature)
+  private static readonly MODEL_VERSION = 4; // v4: iris eccentricity eklendi (21 feature) + training/inference clipping tutarlılığı
 
   exportModel(): string {
     return JSON.stringify({

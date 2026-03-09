@@ -1,9 +1,14 @@
 /**
  * Multi-Model Ensemble for robust eye tracking
- * Trains multiple models with different configurations and combines predictions
+ * Trains multiple models with different configurations and combines predictions.
+ *
+ * KRİTİK DÜZELTME: Her model artık kendi One Euro Filter'ini çalıştırmıyor.
+ * Raw prediction (affine/drift corrected) ortalaması alınıp EyeTracker'da
+ * TEK One Euro Filter uygulanıyor. Bu sayede saccade gecikmesi ve faz kayması
+ * ortadan kaldırıldı.
  */
 
-import { GazeModel } from './gazeModel';
+import { GazeModel, EyeFeatures } from './gazeModel';
 import { CalibrationSample } from './gazeModel';
 import { logger } from './logger';
 
@@ -20,8 +25,8 @@ export class MultiModelEnsemble {
   private models: GazeModel[] = [];
   private modelWeights: number[] = [];
   private config: EnsembleConfig;
-  private lastPrediction: { hash: string; result: any; timestamp: number } | null = null;
-  
+  private lastPrediction: { hash: string; result: { x: number; y: number; confidence: number; timestamp: number }; timestamp: number } | null = null;
+
   constructor(config?: Partial<EnsembleConfig>) {
     this.config = {
       numModels: 3,
@@ -32,17 +37,17 @@ export class MultiModelEnsemble {
       ],
       ...config
     };
-    
+
     this.initializeModels();
   }
-  
+
   private initializeModels(): void {
-    this.models = this.config.modelConfigs.map(config => 
+    this.models = this.config.modelConfigs.map(config =>
       new GazeModel(config.lambda)
     );
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
   }
-  
+
   /**
    * Train all models in the ensemble
    */
@@ -54,12 +59,12 @@ export class MultiModelEnsemble {
       this.modelWeights = [1, 0, 0];
       return;
     }
-    
+
     // Train each model with different strategies
     this.config.modelConfigs.forEach((config, i) => {
       const model = this.models[i];
       let trainSamples = [...samples];
-      
+
       // Apply different sampling strategies
       if (config.sampleWeight === 'confidence') {
         // Oversample high-confidence samples
@@ -68,15 +73,15 @@ export class MultiModelEnsemble {
         // Give more weight to recent samples
         trainSamples = this.weightByTime(samples);
       }
-      
-      // Add noise for diversity (different random seeds)
+
+      // Noise'u feature'lara ekle (target'a değil — target'a noise eklemek modeli bozar)
       if (i > 0) {
-        trainSamples = this.addNoiseToSamples(trainSamples, 0.005 * i);
+        trainSamples = this.addNoiseToFeatures(trainSamples, 0.003 * i);
       }
-      
+
       model.train(trainSamples);
     });
-    
+
     // Initial equal weights
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
   }
@@ -104,7 +109,7 @@ export class MultiModelEnsemble {
       }
 
       if (i > 0) {
-        trainSamples = this.addNoiseToSamples(trainSamples, 0.005 * i);
+        trainSamples = this.addNoiseToFeatures(trainSamples, 0.003 * i);
       }
 
       try {
@@ -121,33 +126,36 @@ export class MultiModelEnsemble {
   }
 
   /**
-   * Get ensemble prediction
+   * Get ensemble prediction — RAW corrected predictions ortalaması (filter YOK).
+   * Her model kendi One Euro Filter'ini çalıştırmıyor, böylece saccade gecikmesi
+   * ve faz kayması ortadan kaldırılıyor.
    */
-  predict(features: any): { x: number; y: number; confidence: number } | null {
+  predict(features: EyeFeatures): { x: number; y: number; confidence: number; timestamp: number } | null {
     // Simple feature hash for caching
     const featureHash = this.hashFeatures(features);
     const now = Date.now();
-    
+
     // Check cache (valid for 16ms)
-    if (this.lastPrediction && 
+    if (this.lastPrediction &&
         this.lastPrediction.hash === featureHash &&
         now - this.lastPrediction.timestamp < 16) {
       return this.lastPrediction.result;
     }
-    
+
+    // predictRawCorrected kullan (filter yok, affine/drift var)
     const predictions = this.models.map((model, i) => ({
-      pred: model.predict(features),
+      pred: model.predictRawCorrected(features),
       weight: this.modelWeights[i]
     })).filter(p => p.pred !== null);
-    
+
     if (predictions.length === 0) return null;
-    
-    // Weighted average
+
+    // Weighted average of RAW corrected predictions
     let totalWeight = 0;
     let weightedX = 0;
     let weightedY = 0;
     let minConfidence = 1;
-    
+
     predictions.forEach(({ pred, weight }) => {
       if (pred) {
         weightedX += pred.x * weight;
@@ -156,13 +164,13 @@ export class MultiModelEnsemble {
         minConfidence = Math.min(minConfidence, pred.confidence);
       }
     });
-    
+
     if (totalWeight === 0) return null;
-    
+
     // Calculate prediction variance for confidence
     const avgX = weightedX / totalWeight;
     const avgY = weightedY / totalWeight;
-    
+
     let variance = 0;
     predictions.forEach(({ pred, weight }) => {
       if (pred) {
@@ -172,37 +180,39 @@ export class MultiModelEnsemble {
       }
     });
     variance /= totalWeight;
-    
+
     // Higher variance = lower confidence
     const ensembleConfidence = minConfidence * Math.exp(-variance / 1000);
-    
+
     const result = {
       x: avgX,
       y: avgY,
       confidence: ensembleConfidence,
-      timestamp: Date.now()
+      timestamp: now
     };
-    
+
     // Cache the result
     this.lastPrediction = {
       hash: featureHash,
       result,
       timestamp: now
     };
-    
-    return result as any;
+
+    return result;
   }
-  
+
   /**
    * Update model weights based on validation performance
    */
   updateWeights(validationSamples: CalibrationSample[]): void {
+    if (validationSamples.length < 3) return;
+
     const errors = this.models.map(model => {
       let totalError = 0;
       let count = 0;
-      
+
       validationSamples.forEach(sample => {
-        const pred = model.predict(sample.features);
+        const pred = model.predictRawCorrected(sample.features);
         if (pred) {
           const dx = pred.x - sample.targetX;
           const dy = pred.y - sample.targetY;
@@ -210,51 +220,60 @@ export class MultiModelEnsemble {
           count++;
         }
       });
-      
+
       return count > 0 ? totalError / count : Infinity;
     });
-    
+
     // Convert errors to weights (lower error = higher weight)
     const minError = Math.min(...errors);
     const weights = errors.map(e => Math.exp(-(e - minError) / 50));
     const totalWeight = weights.reduce((a, b) => a + b, 0);
-    
+
     this.modelWeights = weights.map(w => w / totalWeight);
-    logger.log('[Ensemble] Updated weights:', this.modelWeights);
+    logger.log('[Ensemble] Updated weights:', this.modelWeights.map(w => w.toFixed(3)), 'errors:', errors.map(e => e.toFixed(1)));
   }
-  
+
   private oversampleByConfidence(samples: CalibrationSample[]): CalibrationSample[] {
     const highConfidenceSamples = samples.filter(s => s.features.confidence > 0.8);
     const augmented = [...samples];
-    
+
     // Add high confidence samples twice more
     highConfidenceSamples.forEach(s => {
       augmented.push(s, s);
     });
-    
+
     return this.shuffleArray(augmented);
   }
-  
+
   private weightByTime(samples: CalibrationSample[]): CalibrationSample[] {
     // Duplicate recent samples
     const recentThreshold = samples.length * 0.7;
     const augmented = [...samples];
-    
+
     samples.slice(recentThreshold).forEach(s => {
       augmented.push(s); // Add recent samples again
     });
-    
+
     return augmented;
   }
-  
-  private addNoiseToSamples(samples: CalibrationSample[], noiseLevel: number): CalibrationSample[] {
+
+  /**
+   * Feature'lara noise ekle (target'a DEĞİL — target'a noise eklemek modeli bozar).
+   * Iris pozisyonlarına küçük gaussian noise ekleyerek model çeşitliliği sağlar.
+   */
+  private addNoiseToFeatures(samples: CalibrationSample[], noiseLevel: number): CalibrationSample[] {
     return samples.map(s => ({
       ...s,
-      targetX: s.targetX + (Math.random() - 0.5) * noiseLevel * 100,
-      targetY: s.targetY + (Math.random() - 0.5) * noiseLevel * 100
+      features: {
+        ...s.features,
+        leftIrisRelX: s.features.leftIrisRelX + (Math.random() - 0.5) * noiseLevel,
+        leftIrisRelY: s.features.leftIrisRelY + (Math.random() - 0.5) * noiseLevel,
+        rightIrisRelX: s.features.rightIrisRelX + (Math.random() - 0.5) * noiseLevel,
+        rightIrisRelY: s.features.rightIrisRelY + (Math.random() - 0.5) * noiseLevel,
+      }
     }));
   }
-  
+
   private shuffleArray<T>(array: T[]): T[] {
     const arr = [...array];
     for (let i = arr.length - 1; i > 0; i--) {
@@ -263,24 +282,24 @@ export class MultiModelEnsemble {
     }
     return arr;
   }
-  
+
   /**
    * Get individual model predictions for debugging
    */
-  getModelPredictions(features: any): Array<{ x: number; y: number; weight: number } | null> {
+  getModelPredictions(features: EyeFeatures): Array<{ x: number; y: number; weight: number } | null> {
     return this.models.map((model, i) => {
-      const pred = model.predict(features);
+      const pred = model.predictRawCorrected(features);
       return pred ? { ...pred, weight: this.modelWeights[i] } : null;
     });
   }
-  
+
   reset(): void {
     this.models.forEach(m => m.resetSmoothing());
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
     this.lastPrediction = null;
   }
-  
-  private hashFeatures(features: any): string {
+
+  private hashFeatures(features: EyeFeatures): string {
     // Simple hash based on key feature values
     const vals = [
       features.leftIrisX.toFixed(3),

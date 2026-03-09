@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import NextImage from "next/image";
-import { GazeModel, GazePoint, EyeFeatures } from "@/lib/gazeModel";
+import { GazeModel, GazePoint, EyeFeatures, OneEuroFilter } from "@/lib/gazeModel";
 import { FaceTracker } from "@/lib/faceTracker";
 import { FixationDetector, Fixation, FixationMetrics } from "@/lib/fixation";
 import { HeatmapGenerator } from "@/lib/heatmap";
@@ -86,6 +86,10 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const autoRecalRef = useRef<AutoRecalibration>(null as unknown as AutoRecalibration);
   if (!autoRecalRef.current) autoRecalRef.current = new AutoRecalibration();
   const useEnsemble = useRef(true);
+  // Ensemble için ayrı One Euro Filter (ensemble raw prediction döndürüyor)
+  const ensembleFilterX = useRef(new OneEuroFilter(1.0, 0.015, 1.0));
+  const ensembleFilterY = useRef(new OneEuroFilter(1.0, 0.015, 1.0));
+  const ensemblePredHistory = useRef<Array<{ x: number; y: number; t: number }>>([]);
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
@@ -378,6 +382,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     // Aksi halde önceki görselin filter state'i yeni görsele "yapışır"
     modelRef.current.resetSmoothing();
     if (ensembleRef.current) ensembleRef.current.reset();
+    ensembleFilterX.current.reset();
+    ensembleFilterY.current.reset();
+    ensemblePredHistory.current = [];
     if (autoRecalRef.current) autoRecalRef.current.reset();
 
     transitionPhotoNumRef.current = idx + 1;
@@ -423,9 +430,23 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     if (samples && samples.length > 0 && ensembleRef.current) {
       const ensemble = ensembleRef.current;
       logger.log("[EyeTracker] Training ensemble with", samples.length, "samples");
-      ensemble.trainAsync(samples).catch((err) => {
+      ensemble.trainAsync(samples).then(() => {
+        // Eğitim sonrası ağırlıkları validation sample'larıyla güncelle
+        // Son %20'yi validation olarak kullan (farklı noktalardan geliyorlar)
+        const valStart = Math.floor(samples.length * 0.8);
+        const valSamples = samples.slice(valStart);
+        if (valSamples.length >= 5) {
+          ensemble.updateWeights(valSamples);
+        }
+      }).catch((err) => {
         logger.warn("[EyeTracker] Ensemble async training failed, trying sync:", err);
-        try { ensemble.train(samples); } catch { /* ignore */ }
+        try {
+          ensemble.train(samples);
+          // Sync sonrası da ağırlık güncelle
+          const valStart = Math.floor(samples.length * 0.8);
+          const valSamples = samples.slice(valStart);
+          if (valSamples.length >= 5) ensemble.updateWeights(valSamples);
+        } catch { /* ignore */ }
       });
     }
   }, []);
@@ -635,7 +656,42 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
 
       try {
         if (useEnsemble.current && ensembleRef.current) {
-          screenPoint = ensembleRef.current.predict(features) as GazePoint;
+          const rawEnsemble = ensembleRef.current.predict(features);
+          if (rawEnsemble) {
+            // Ensemble raw corrected prediction döndürüyor — burada TEK One Euro Filter uygula
+            const now = performance.now();
+
+            // Velocity hesapla (adaptive filter parametreleri için)
+            let velocity = 0;
+            const hist = ensemblePredHistory.current;
+            if (hist.length > 0) {
+              const last = hist[hist.length - 1];
+              const dt = (now - last.t) / 1000;
+              if (dt > 0.15) {
+                // Blink/kayıp — filter resetle
+                ensembleFilterX.current.reset();
+                ensembleFilterY.current.reset();
+              } else if (dt > 0) {
+                velocity = Math.sqrt((rawEnsemble.x - last.x) ** 2 + (rawEnsemble.y - last.y) ** 2) / dt;
+              }
+            }
+
+            ensembleFilterX.current.setDynamicParams(velocity, features.confidence);
+            ensembleFilterY.current.setDynamicParams(velocity, features.confidence);
+
+            const filteredX = ensembleFilterX.current.filter(rawEnsemble.x, now);
+            const filteredY = ensembleFilterY.current.filter(rawEnsemble.y, now);
+
+            hist.push({ x: filteredX, y: filteredY, t: now });
+            if (hist.length > 30) hist.shift();
+
+            screenPoint = {
+              x: filteredX,
+              y: filteredY,
+              confidence: rawEnsemble.confidence,
+              timestamp: rawEnsemble.timestamp,
+            };
+          }
         }
       } catch (e) {
         // Ensemble başarısız olursa single model'e düş

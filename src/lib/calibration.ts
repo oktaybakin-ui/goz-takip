@@ -380,6 +380,23 @@ export class CalibrationManager {
       if (r4stdX > effectiveIrisStdMax * 1.2 || r4stdY > effectiveIrisStdMax * 1.2) return false;
     }
 
+    // Gaze direction sanity check: kalibrasyon noktası ile iris yöneliminin kaba tutarlılığı
+    // Sadece aşırı tutarsızlıkları yakalar (kullanıcı başka yere bakıyorsa)
+    if (this.calibrationPoints.length >= 9) {
+      const maxPtX = this.calibrationPoints.reduce((mx, p) => Math.max(mx, p.x), 0);
+      const maxPtY = this.calibrationPoints.reduce((mx, p) => Math.max(mx, p.y), 0);
+      if (maxPtX > 0 && maxPtY > 0) {
+        const pointRelX = point.x / maxPtX; // 0-1 arası: sol-sağ
+        const pointRelY = point.y / maxPtY; // 0-1 arası: üst-alt
+        const avgIrisX = (features.leftIrisRelX + features.rightIrisRelX) / 2;
+        const avgIrisY = (features.leftIrisRelY + features.rightIrisRelY) / 2;
+        // Çok geniş threshold: sadece tamamen ters bakışı reddet
+        if (Math.abs(pointRelX - avgIrisX) > 0.7 || Math.abs(pointRelY - avgIrisY) > 0.7) {
+          return false;
+        }
+      }
+    }
+
     const sample: CalibrationSample = {
       features,
       targetX: point.x,

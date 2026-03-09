@@ -578,6 +578,8 @@ export class FaceTracker {
     // Advanced iris detection: RANSAC circle fitting + temporal smoothing
     let leftIrisStable: { x: number; y: number };
     let rightIrisStable: { x: number; y: number };
+    let lastLeftEccentricity = 0;
+    let lastRightEccentricity = 0;
 
     if (this.useAdvancedIris && this.advancedIrisDetector) {
       // Göz kontur landmark'larını hazırla
@@ -621,6 +623,16 @@ export class FaceTracker {
 
         leftIrisStable = leftResult.center;
         rightIrisStable = rightResult.center;
+
+        // İris eccentricity hesapla (perspektif deformasyon bilgisi)
+        const calcEcc = (ell: { radiusX: number; radiusY: number } | undefined): number => {
+          if (!ell || ell.radiusX <= 0 || ell.radiusY <= 0) return 0;
+          const a = Math.max(ell.radiusX, ell.radiusY);
+          const b = Math.min(ell.radiusX, ell.radiusY);
+          return Math.sqrt(1 - (b / a) ** 2);
+        };
+        lastLeftEccentricity = calcEcc(leftResult.ellipse);
+        lastRightEccentricity = calcEcc(rightResult.ellipse);
       } else {
         // Yetersiz landmark → temel yönteme düş
         leftIrisStable = this.getIrisCenter(landmarks, LEFT_EYE_INDICES);
@@ -739,6 +751,8 @@ export class FaceTracker {
       leftEyeWidth,
       rightEyeWidth,
       confidence,
+      irisEccentricity: (lastLeftEccentricity + lastRightEccentricity) / 2,
+      eccentricityAsym: lastLeftEccentricity - lastRightEccentricity,
     };
   }
 

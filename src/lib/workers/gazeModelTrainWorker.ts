@@ -160,12 +160,19 @@ export function gazeModelTrainWorkerFn() {
       groupIndices,
     } = msg;
 
-    // Normalize + polynomial feature generation
+    // Normalize + soft tanh clipping + polynomial feature generation
+    // KRİTİK: predictRaw ile AYNI clipping uygulanmalı (training/inference tutarlılığı)
+    const softTanhClip = (z: number): number => {
+      if (Math.abs(z) <= 2.5) return z;
+      const sign = z > 0 ? 1 : -1;
+      return sign * (2.5 + Math.tanh(z - sign * 2.5));
+    };
     const polyFeatures: number[][] = [];
     for (const input of rawInputs) {
       const normalized = input.map((val, i) => {
         const std = featureStds[i] || 1;
-        return std === 0 ? 0 : (val - featureMeans[i]) / std;
+        const z = std === 0 ? 0 : (val - featureMeans[i]) / std;
+        return softTanhClip(z);
       });
       polyFeatures.push(createSelectivePolynomialFeatures(normalized));
     }
