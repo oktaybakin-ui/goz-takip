@@ -781,7 +781,7 @@ export class FaceTracker {
     let relY = 0.5;
     if (eyeHeight > 0.001) relY = (irisPerp - topPerp) / (botPerp - topPerp);
     const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-    return { x: clamp(rawRelX, -0.15, 1.15), y: clamp(relY, -0.1, 1.1) };
+    return { x: clamp(rawRelX, -0.4, 1.4), y: clamp(relY, -0.3, 1.3) };
   }
 
   /** İris merkezi: 5 iris noktasının centroid'i (tek landmark yerine — daha hassas göz bebeği konumu) */

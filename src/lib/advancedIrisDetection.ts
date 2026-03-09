@@ -254,9 +254,9 @@ export class AdvancedIrisDetector {
     let weightedRadius = 0;
     let weightedConfidence = 0;
 
-    // Adaptive decay: yüksek fitness (>0.5) → 0.9 decay (sinyale güven)
-    //                  düşük fitness (<0.3) → 0.5 decay (geçmişe güven, gürültü bastır)
-    const decay = 0.5 + Math.min(fitness, 0.8) * 0.5; // 0.5→0.9 arası
+    // Sabit decay: adaptive decay periferik bakışta amplitüd kaybına neden oluyordu
+    // 0.75 dengeli: gürültüyü bastırır ama sinyali kırpmaz (~5-10% amplitüd kaybı)
+    const decay = 0.75;
 
     history.forEach((features, i) => {
       // Confidence-weighted: her frame'in kendi kalitesi de ağırlığa katılır

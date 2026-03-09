@@ -354,8 +354,8 @@ export class CalibrationManager {
       ? Math.abs(features.yaw - this.prevPoseForCalib.yaw) + Math.abs(features.pitch - this.prevPoseForCalib.pitch)
       : 0;
     this.prevPoseForCalib = { yaw: features.yaw, pitch: features.pitch };
-    // Baş hareket ederken iris eşiğini %40 düşür (hareket sırasında alınan veri güvenilmez)
-    const effectiveIrisStdMax = poseMovement > 0.02 ? this.IRIS_STD_MAX * 0.6 : this.IRIS_STD_MAX;
+    // Baş hareket ederken iris eşiğini %20 düşür (hareket sırasında alınan veri güvenilmez)
+    const effectiveIrisStdMax = poseMovement > 0.02 ? this.IRIS_STD_MAX * 0.8 : this.IRIS_STD_MAX;
 
     // Multi-scale iris stabilite kontrolü
     const irisAvg = (features.leftIrisRelX + features.rightIrisRelX) / 2;
