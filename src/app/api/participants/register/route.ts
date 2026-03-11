@@ -4,7 +4,7 @@ import { hashTC, validateTCServer } from "@/lib/api-helpers";
 
 export const dynamic = "force-dynamic";
 
-// Sınırsız deneme yapabilecek TC hash'leri (test amaçlı)
+// Sınırsız deneme yapabilecek TC hash'leri (admin)
 const UNLIMITED_TC_HASHES = new Set<string>();
 // Başlangıçta hash'leri hesapla
 const UNLIMITED_TCS = ["11654859098"];
@@ -15,6 +15,9 @@ const initUnlimitedHashes = async () => {
   }
 };
 const _initPromise = initUnlimitedHashes();
+
+// Normal kullanıcılar için maksimum deneme hakkı
+const MAX_ATTEMPTS = 3;
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,21 +41,25 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (existing) {
-      // Sınırsız TC'ler için completed kontrolünü atla
+      // Admin TC'ler sınırsız deneme hakkına sahip
       await _initPromise;
       const isUnlimited = UNLIMITED_TC_HASHES.has(tcHash);
 
       if (!isUnlimited) {
-        // Check if they have a completed session
-        const { data: activeSessions } = await supabase
+        // Tüm oturumları say (tamamlanmış + devam eden + terk edilmiş)
+        const { data: allSessions, error: countError } = await supabase
           .from("test_sessions")
           .select("id, status")
-          .eq("participant_id", existing.id)
-          .in("status", ["completed"]);
+          .eq("participant_id", existing.id);
 
-        if (activeSessions && activeSessions.length > 0) {
+        if (countError) {
+          return NextResponse.json({ error: countError.message }, { status: 500 });
+        }
+
+        const sessionCount = allSessions?.length || 0;
+        if (sessionCount >= MAX_ATTEMPTS) {
           return NextResponse.json(
-            { error: "Bu TC ile daha önce test yapılmıştır." },
+            { error: `Deneme hakkınız dolmuştur (${MAX_ATTEMPTS}/${MAX_ATTEMPTS}). Daha fazla test yapamazsınız.` },
             { status: 409 }
           );
         }
@@ -72,9 +79,17 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ error: sessionError.message }, { status: 500 });
       }
 
+      // Kalan hak bilgisi
+      const { count: newCount } = await supabase
+        .from("test_sessions")
+        .select("id", { count: "exact", head: true })
+        .eq("participant_id", existing.id);
+
       return NextResponse.json({
         participantId: existing.id,
         sessionId: session.id,
+        attemptsUsed: newCount || 1,
+        maxAttempts: isUnlimited ? -1 : MAX_ATTEMPTS,
       });
     }
 
@@ -109,6 +124,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       participantId: participant.id,
       sessionId: session.id,
+      attemptsUsed: 1,
+      maxAttempts: MAX_ATTEMPTS,
     });
   } catch (err) {
     console.error("[register] Error:", err);

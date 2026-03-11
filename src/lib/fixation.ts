@@ -115,6 +115,20 @@ export class FixationDetector {
   private previousVelocity: number = 0;
   private previousTimestamp: number = 0;
 
+  // Debug istatistikleri
+  private debugStats = {
+    totalPoints: 0,
+    lowConfidenceDropped: 0,
+    blinkDropped: 0,
+    postBlinkDropped: 0,
+    fixationFrames: 0,
+    saccadeFrames: 0,
+    velocitySum: 0,
+    velocityCount: 0,
+    distFromCenterSum: 0,
+    distFromCenterCount: 0,
+  };
+
   /**
    * @param velocityThreshold - I-VT hız eşiği (px/s). 0 verilirse köşegenden otomatik hesaplanır.
    * @param imageDiagonal - Görüntü koordinat alanının köşegeni (px). Gaze noktaları bu koordinat
@@ -141,13 +155,16 @@ export class FixationDetector {
     );
 
     // Köşegene normalize edilmiş parametreler
-    this.velocityThreshold = velocityThreshold > 0 ? velocityThreshold : diag * 0.025;
+    // Webcam göz takibi tipik gürültü: ±30-60px. Eşiklerin bu gürültüyü tolere etmesi gerek.
+    // velocityThreshold: ~88 px/s (2203 diag) — gerçek saccade 200-800 px/s
+    // maxFixationRadius: ~77 px (2203 diag) — fixation sırasındaki jitter'ı kabul eder
+    this.velocityThreshold = velocityThreshold > 0 ? velocityThreshold : diag * 0.04;
     this.minFixationDuration = minFixationDuration;
-    this.maxFixationRadius = maxFixationRadius > 0 ? maxFixationRadius : diag * 0.018;
-    this.dbscanEps = dbscanEps > 0 ? dbscanEps : diag * 0.018;
+    this.maxFixationRadius = maxFixationRadius > 0 ? maxFixationRadius : diag * 0.035;
+    this.dbscanEps = dbscanEps > 0 ? dbscanEps : diag * 0.035;
     this.dbscanMinPts = dbscanMinPts;
     this.mode = mode;
-    this.maxDispersion = maxDispersion > 0 ? maxDispersion : diag * 0.016;
+    this.maxDispersion = maxDispersion > 0 ? maxDispersion : diag * 0.03;
     this.idtMinDuration = idtMinDuration;
     this.maxAcceleration = maxAcceleration;
   }
@@ -165,6 +182,19 @@ export class FixationDetector {
     this.saccadeStartPoint = null;
     this.previousVelocity = 0;
     this.previousTimestamp = 0;
+    this.debugStats = {
+      totalPoints: 0,
+      lowConfidenceDropped: 0,
+      blinkDropped: 0,
+      postBlinkDropped: 0,
+      fixationFrames: 0,
+      saccadeFrames: 0,
+      velocitySum: 0,
+      velocityCount: 0,
+      distFromCenterSum: 0,
+      distFromCenterCount: 0,
+    };
+    console.log(`[FixationDetector] startTracking — velocityThreshold: ${this.velocityThreshold.toFixed(1)} px/s, maxFixationRadius: ${this.maxFixationRadius.toFixed(1)} px, dbscanEps: ${this.dbscanEps.toFixed(1)}, minFixDuration: ${this.minFixationDuration} ms`);
   }
 
   /**
@@ -179,13 +209,19 @@ export class FixationDetector {
       this.gazePoints.splice(0, this.gazePoints.length - this.MAX_GAZE_POINTS);
     }
 
-    if (point.confidence < CONFIDENCE_MIN_FIXATION) return null;
+    this.debugStats.totalPoints++;
+
+    if (point.confidence < CONFIDENCE_MIN_FIXATION) {
+      this.debugStats.lowConfidenceDropped++;
+      return null;
+    }
 
     // Göz kırpma boşluğu tespiti (100-400ms)
     if (this.lastValidTimestamp > 0) {
       const gap = point.timestamp - this.lastValidTimestamp;
       if (gap > this.BLINK_GAP_MS && gap < 400) {
         this.postBlinkCounter = this.POST_BLINK_REJECT;
+        this.debugStats.blinkDropped++;
         return null;
       }
     }
@@ -194,6 +230,7 @@ export class FixationDetector {
     if (this.postBlinkCounter > 0) {
       this.postBlinkCounter--;
       this.lastValidTimestamp = point.timestamp;
+      this.debugStats.postBlinkDropped++;
       return null;
     }
 
@@ -288,7 +325,16 @@ export class FixationDetector {
     this.previousVelocity = velocity;
     this.previousTimestamp = point.timestamp;
 
+    // Debug istatistikleri güncelle
+    if (velocity > 0) {
+      this.debugStats.velocitySum += velocity;
+      this.debugStats.velocityCount++;
+    }
+    this.debugStats.distFromCenterSum += distFromCenter;
+    this.debugStats.distFromCenterCount++;
+
     if (isFixation) {
+      this.debugStats.fixationFrames++;
       // Saccade bitti (fixation'a geçiş)
       this.saccadeStartPoint = null;
       this.currentSaccadePeakVelocity = 0;
@@ -296,6 +342,7 @@ export class FixationDetector {
       this.currentFixationPoints.push(point);
       return null;
     } else {
+      this.debugStats.saccadeFrames++;
       const completedFixation = this.finalizeFixation();
       this.currentFixationPoints = [point];
 
@@ -404,6 +451,21 @@ export class FixationDetector {
   stopTracking(): void {
     this.finalizeFixation();
     this.currentFixationPoints = [];
+
+    // Debug özeti
+    const s = this.debugStats;
+    const avgVelocity = s.velocityCount > 0 ? s.velocitySum / s.velocityCount : 0;
+    const avgDistCenter = s.distFromCenterCount > 0 ? s.distFromCenterSum / s.distFromCenterCount : 0;
+    console.log(
+      `[FixationDetector] stopTracking SUMMARY:\n` +
+      `  Total points received: ${s.totalPoints}\n` +
+      `  Low confidence dropped: ${s.lowConfidenceDropped} (${s.totalPoints > 0 ? (s.lowConfidenceDropped / s.totalPoints * 100).toFixed(1) : 0}%)\n` +
+      `  Blink dropped: ${s.blinkDropped}, Post-blink dropped: ${s.postBlinkDropped}\n` +
+      `  Fixation frames: ${s.fixationFrames}, Saccade frames: ${s.saccadeFrames}\n` +
+      `  Avg velocity: ${avgVelocity.toFixed(1)} px/s (threshold: ${this.velocityThreshold.toFixed(1)})\n` +
+      `  Avg distFromCenter: ${avgDistCenter.toFixed(1)} px (maxRadius: ${this.maxFixationRadius.toFixed(1)})\n` +
+      `  Final fixations: ${this.fixations.length}, Saccades: ${this.saccades.length}`
+    );
   }
 
   // DBSCAN kümeleme

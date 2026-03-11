@@ -636,12 +636,14 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     faceTrackerRef.current.stopTracking();
 
     let debugCounter = 0;
-    const debugInterval = 300; // Her 300 frame'de bir log (daha az console spam)
+    const debugInterval = 150; // Her 150 frame'de bir log
+    let coordTransformNullCount = 0;
+    let coordTransformOkCount = 0;
     const mobile = isMobileDevice();
 
     faceTrackerRef.current.startTracking((features: EyeFeatures) => {
       debugCounter++;
-      const shouldLog = debugCounter % debugInterval === 1;
+      const shouldLog = debugCounter % debugInterval === 1 || debugCounter <= 10;
 
       // Geçiş overlay aktifken veri toplama (kirlilik önleme)
       if (showTransitionOverlayRef.current) return;
@@ -813,10 +815,13 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       );
 
       if (!imagePoint) {
+        coordTransformNullCount++;
         if (shouldLog) logger.log("[Tracking] Görüntü dışı:", Math.round(screenPoint.x), Math.round(screenPoint.y),
-          "| ImageRect:", Math.round(imageRect.left), Math.round(imageRect.top), Math.round(imageRect.width), Math.round(imageRect.height));
+          "| ImageRect:", Math.round(imageRect.left), Math.round(imageRect.top), Math.round(imageRect.width), Math.round(imageRect.height),
+          `| null/ok: ${coordTransformNullCount}/${coordTransformOkCount}`);
         return;
       }
+      coordTransformOkCount++;
 
       const point: GazePoint = {
         x: imagePoint.x,
@@ -825,14 +830,14 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         confidence: screenPoint.confidence,
       };
 
-      const BOUNDARY_MARGIN = 30;
+      const BOUNDARY_MARGIN = 20;
       const edgeDistX = Math.min(point.x, dims.width - point.x);
       const edgeDistY = Math.min(point.y, dims.height - point.y);
       const edgeDist = Math.min(edgeDistX, edgeDistY);
-      // Kenar yakınında confidence düşür; tüm noktaları kaydet (takılmama için)
+      // Kenar yakınında confidence düşür — ama minimum 0.2 garanti (fixation detector'ı geçebilsin)
       if (edgeDist >= 0 && dims.width > 0 && dims.height > 0) {
         if (edgeDist < BOUNDARY_MARGIN && edgeDist > 0) {
-          point.confidence *= (edgeDist / BOUNDARY_MARGIN);
+          point.confidence *= Math.max(0.2, edgeDist / BOUNDARY_MARGIN);
         }
         gazePointsRef.current.push(point);
         // Daha agresif memory management
