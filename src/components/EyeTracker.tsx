@@ -66,6 +66,12 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const [showHeatmap, setShowHeatmap] = useState(false);
   const [isTracking, setIsTracking] = useState(false);
   const [trackingDuration, setTrackingDuration] = useState(0);
+  const trackingDurationRef = useRef(0);
+  // DOM ref'leri — timer güncellemesini state re-render olmadan yapar (titreme önleme)
+  const timerDisplayRef = useRef<HTMLSpanElement>(null);
+  const progressBarRef = useRef<HTMLDivElement>(null);
+  const remainingDisplayRef = useRef<HTMLSpanElement>(null);
+  const analysisTimerRef = useRef<HTMLSpanElement>(null);
   const [calibrationError, setCalibrationError] = useState<number>(0);
   const [imageLoaded, setImageLoaded] = useState(false);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
@@ -89,6 +95,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
 
   const imageDimsRef = useRef(imageDimensions);
   imageDimsRef.current = imageDimensions;
+  const currentImageIndexRef = useRef(currentImageIndex);
+  currentImageIndexRef.current = currentImageIndex;
   const imageNatDimsRef = useRef(imageNaturalDimensions);
   imageNatDimsRef.current = imageNaturalDimensions;
 
@@ -418,6 +426,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     setFixations([]);
     setMetrics(null);
     // Süreyi ÖNCE sıfırla — timer drift correction bitene kadar başlamayacak
+    trackingDurationRef.current = 0;
     setTrackingDuration(0);
     setShowDriftCorrection(true);
     setCurrentImageIndex(idx + 1);
@@ -594,6 +603,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       return;
     }
     setIsTracking(true);
+    trackingDurationRef.current = 0;
     setTrackingDuration(0);
     fixationsRef.current = [];
     setFixations([]);
@@ -610,8 +620,31 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     blinkDetectorRef.current.start();
 
     if (trackingTimerRef.current) clearInterval(trackingTimerRef.current);
+    trackingDurationRef.current = 0;
     trackingTimerRef.current = setInterval(() => {
-      setTrackingDuration((prev) => prev + 100);
+      trackingDurationRef.current += 100;
+      const dur = trackingDurationRef.current;
+      // DOM'u doğrudan güncelle — state re-render yok, titreme yok
+      const secs = Math.floor(dur / 1000);
+      const tenths = Math.floor((dur % 1000) / 100);
+      const timeStr = `${secs}.${tenths}s`;
+      if (timerDisplayRef.current) timerDisplayRef.current.textContent = timeStr;
+      if (progressBarRef.current) {
+        progressBarRef.current.style.width = `${Math.min(100, (dur / IMAGE_DURATION_MS) * 100)}%`;
+      }
+      if (remainingDisplayRef.current) {
+        const remaining = Math.max(0, Math.ceil((IMAGE_DURATION_MS - dur) / 1000));
+        remainingDisplayRef.current.textContent = `Foto ${(currentImageIndexRef.current ?? 0) + 1}/${imageCount} · ${remaining} s kaldı`;
+      }
+      if (analysisTimerRef.current) {
+        const totalSecs = Math.floor(IMAGE_DURATION_MS / 1000);
+        const totalTenths = Math.floor((IMAGE_DURATION_MS % 1000) / 100);
+        analysisTimerRef.current.textContent = `Analiz ediliyor... ${timeStr} / ${totalSecs}.${totalTenths}s`;
+      }
+      // Image advance kontrolü (eskiden useEffect'teydi)
+      if (dur >= IMAGE_DURATION_MS) {
+        setTrackingDuration(dur); // Sadece advance tetiklemek için — bu tek state güncelleme
+      }
     }, 100);
     
     // Auto-recalibration timer (her 30 saniyede bir kontrol)
@@ -1365,7 +1398,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
                   {isTracking ? "Takip Ediliyor" : "Hazır"}
                 </span>
               </div>
-              <span className="text-gray-400 text-sm">
+              <span ref={timerDisplayRef} className="text-gray-400 text-sm">
                 {formatTime(trackingDuration)}
               </span>
               <span className="text-gray-600 text-xs">
@@ -1377,8 +1410,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
                   : ""}
               </span>
               {isMultiImage && (
-                <span aria-live="polite" className="text-blue-300 text-sm font-medium">
-                  Foto {currentImageIndex + 1}/{imageCount} · {Math.max(0, Math.ceil((IMAGE_DURATION_MS - trackingDuration) / 1000))} s kaldı
+                <span ref={remainingDisplayRef} aria-live="polite" className="text-blue-300 text-sm font-medium">
+                  Foto {currentImageIndex + 1}/{imageCount} · {Math.max(0, Math.ceil(IMAGE_DURATION_MS / 1000))} s kaldı
                 </span>
               )}
               {resizeWarning && (
@@ -1400,10 +1433,11 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
               </button>
             </div>
             {isMultiImage && isTracking && (
-              <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden" role="progressbar" aria-valuenow={Math.min(100, Math.round((trackingDuration / IMAGE_DURATION_MS) * 100))} aria-valuemin={0} aria-valuemax={100}>
+              <div className="w-full bg-gray-800 rounded-full h-2 overflow-hidden" role="progressbar" aria-valuenow={0} aria-valuemin={0} aria-valuemax={100}>
                 <div
+                  ref={progressBarRef}
                   className="h-full bg-gradient-to-r from-blue-500 to-blue-400 rounded-full transition-all duration-1000 ease-linear"
-                  style={{ width: `${Math.min(100, (trackingDuration / IMAGE_DURATION_MS) * 100)}%` }}
+                  style={{ width: "0%" }}
                 />
               </div>
             )}
@@ -1471,8 +1505,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
           {isTracking && (
             <div className="flex items-center gap-2 px-4 py-2 bg-green-900/30 border border-green-500/20 rounded-xl">
               <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-green-400 text-sm font-medium">
-                Analiz ediliyor... {formatTime(trackingDuration)} / {formatTime(IMAGE_DURATION_MS)}
+              <span ref={analysisTimerRef} className="text-green-400 text-sm font-medium">
+                Analiz ediliyor... 0.0s / {formatTime(IMAGE_DURATION_MS)}
               </span>
             </div>
           )}
@@ -1526,8 +1560,29 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             setShowTransitionOverlay(true);
             // Drift correction bitti — şimdi tracking timer'ı başlat
             if (trackingTimerRef.current) clearInterval(trackingTimerRef.current);
+            trackingDurationRef.current = 0;
             trackingTimerRef.current = setInterval(() => {
-              setTrackingDuration((prev) => prev + 100);
+              trackingDurationRef.current += 100;
+              const dur = trackingDurationRef.current;
+              const secs = Math.floor(dur / 1000);
+              const tenths = Math.floor((dur % 1000) / 100);
+              const timeStr = `${secs}.${tenths}s`;
+              if (timerDisplayRef.current) timerDisplayRef.current.textContent = timeStr;
+              if (progressBarRef.current) {
+                progressBarRef.current.style.width = `${Math.min(100, (dur / IMAGE_DURATION_MS) * 100)}%`;
+              }
+              if (remainingDisplayRef.current) {
+                const remaining = Math.max(0, Math.ceil((IMAGE_DURATION_MS - dur) / 1000));
+                remainingDisplayRef.current.textContent = `Foto ${(currentImageIndexRef.current ?? 0) + 1}/${imageCount} · ${remaining} s kaldı`;
+              }
+              if (analysisTimerRef.current) {
+                const totalSecs = Math.floor(IMAGE_DURATION_MS / 1000);
+                const totalTenths = Math.floor((IMAGE_DURATION_MS % 1000) / 100);
+                analysisTimerRef.current.textContent = `Analiz ediliyor... ${timeStr} / ${totalSecs}.${totalTenths}s`;
+              }
+              if (dur >= IMAGE_DURATION_MS) {
+                setTrackingDuration(dur);
+              }
             }, 100);
           }}
         />
