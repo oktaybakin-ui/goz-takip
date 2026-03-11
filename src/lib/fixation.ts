@@ -116,8 +116,9 @@ export class FixationDetector {
   private previousTimestamp: number = 0;
 
   /**
-   * @param velocityThreshold - I-VT hız eşiği (px/s). 0 verilirse ekran boyutundan otomatik hesaplanır.
-   * @param screenDiagonal - Ekran köşegeni (px). velocityThreshold=0 ise zorunlu.
+   * @param velocityThreshold - I-VT hız eşiği (px/s). 0 verilirse köşegenden otomatik hesaplanır.
+   * @param imageDiagonal - Görüntü koordinat alanının köşegeni (px). Gaze noktaları bu koordinat
+   *   alanında veriliyorsa burayı doğru ayarlamak kritik. 0 ise ekran köşegenini kullanır.
    */
   constructor(
     velocityThreshold: number = 0,
@@ -129,16 +130,17 @@ export class FixationDetector {
     maxDispersion: number = 0,
     idtMinDuration: number = 150,
     maxAcceleration: number = 8000,
-    screenDiagonal: number = 0
+    imageDiagonal: number = 0
   ) {
-    // Ekran köşegenini otomatik hesapla
-    const diag = screenDiagonal > 0 ? screenDiagonal : (
+    // Gaze noktalarının koordinat alanına göre köşegen hesapla
+    // Noktalar görüntü koordinatlarında geliyorsa imageDiagonal kullanılmalı
+    const diag = imageDiagonal > 0 ? imageDiagonal : (
       typeof window !== "undefined"
         ? Math.sqrt(window.innerWidth ** 2 + window.innerHeight ** 2)
         : 2203 // 1920x1080 default
     );
 
-    // Ekran boyutuna normalize edilmiş parametreler — sıkılaştırıldı
+    // Köşegene normalize edilmiş parametreler
     this.velocityThreshold = velocityThreshold > 0 ? velocityThreshold : diag * 0.025;
     this.minFixationDuration = minFixationDuration;
     this.maxFixationRadius = maxFixationRadius > 0 ? maxFixationRadius : diag * 0.018;
@@ -254,11 +256,6 @@ export class FixationDetector {
     // I-VT kararı: velocity-based fixation
     const ivtIsFixation = velocity < this.velocityThreshold && distFromCenter < this.maxFixationRadius;
 
-    // Debug: ilk 20 karar
-    if (this.gazePoints.length <= 20 || (this.gazePoints.length % 200 === 0 && this.fixations.length === 0)) {
-      console.log(`[FixDet] pt#${this.gazePoints.length} vel=${Math.round(velocity)} thresh=${Math.round(this.velocityThreshold)} dist=${Math.round(distFromCenter)} maxR=${Math.round(this.maxFixationRadius)} fix=${ivtIsFixation} curPts=${this.currentFixationPoints.length} totalFix=${this.fixations.length}`);
-    }
-
     // I-DT kararı: dispersion-based fixation
     let idtIsFixation = true;
     if (this.mode === "idt" || this.mode === "hybrid") {
@@ -371,23 +368,13 @@ export class FixationDetector {
   }
 
   private finalizeFixation(): Fixation | null {
-    if (this.currentFixationPoints.length < 2) {
-      if (this.fixations.length === 0 && this.gazePoints.length > 10) {
-        console.log(`[FixationDetector] finalizeFixation: only ${this.currentFixationPoints.length} points, need >=2. Total gaze: ${this.gazePoints.length}`);
-      }
-      return null;
-    }
+    if (this.currentFixationPoints.length < 2) return null;
 
     const firstPoint = this.currentFixationPoints[0];
     const lastPoint = this.currentFixationPoints[this.currentFixationPoints.length - 1];
     const duration = lastPoint.timestamp - firstPoint.timestamp;
 
-    if (duration < this.minFixationDuration) {
-      if (this.fixations.length === 0 && this.gazePoints.length > 50) {
-        console.log(`[FixationDetector] finalizeFixation: duration ${Math.round(duration)}ms < min ${this.minFixationDuration}ms. Points: ${this.currentFixationPoints.length}. Vel threshold: ${Math.round(this.velocityThreshold)}, MaxRadius: ${Math.round(this.maxFixationRadius)}`);
-      }
-      return null;
-    }
+    if (duration < this.minFixationDuration) return null;
 
     // Güven-ağırlıklı merkez hesabı (yüksek güvenli noktalar daha etkili)
     let sumW = 0, sumX = 0, sumY = 0, sumC = 0;

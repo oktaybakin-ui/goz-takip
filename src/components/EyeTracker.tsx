@@ -39,6 +39,12 @@ interface EyeTrackerProps {
 
 type AppPhase = "loading" | "camera_init" | "pupil_align" | "calibration" | "tracking" | "results";
 
+/** Görüntü koordinat alanına uygun FixationDetector oluşturur */
+function createFixationDetectorWithDims(w: number, h: number): FixationDetector {
+  const imageDiag = (w > 0 && h > 0) ? Math.sqrt(w * w + h * h) : 0;
+  return new FixationDetector(0, 100, 0, 0, 3, "ivt", 0, 150, 8000, imageDiag);
+}
+
 export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, sessionId }: EyeTrackerProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [phase, setPhase] = useState<AppPhase>("loading");
@@ -93,7 +99,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const faceTrackerRef = useRef<FaceTracker>(null as unknown as FaceTracker);
   if (!faceTrackerRef.current) faceTrackerRef.current = new FaceTracker();
   const fixationDetectorRef = useRef<FixationDetector>(null as unknown as FixationDetector);
-  if (!fixationDetectorRef.current) fixationDetectorRef.current = new FixationDetector();
+  if (!fixationDetectorRef.current) fixationDetectorRef.current = createFixationDetectorWithDims(imageDimensions.width, imageDimensions.height);
   const blinkDetectorRef = useRef<BlinkDetector>(null as unknown as BlinkDetector);
   // Mobilde EAR değerleri daha düşük → blink threshold'u düşür, consecutive frame'i artır
   if (!blinkDetectorRef.current) blinkDetectorRef.current = new BlinkDetector(
@@ -256,7 +262,12 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         faceTrackerRef.current.startTracking(() => {});
 
         setCameraStatus("Hazır!");
-        setPhase("pupil_align");
+        // Mobilde göz bebek hizalama adımını otomatik atla — küçük ekranda sürükleme zor
+        if (isMobileDevice()) {
+          setPhase("calibration");
+        } else {
+          setPhase("pupil_align");
+        }
       } catch (err) {
         if (!mounted) return;
         // Başarısız başlatma durumunda kamera stream'ini temizle
@@ -373,7 +384,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     // Önce mutable ref'leri güncelle (state güncellemelerinden önce)
     gazePointsRef.current = [];
     latestGazeRef.current = null;
-    fixationDetectorRef.current = new FixationDetector();
+    fixationDetectorRef.current = createFixationDetectorWithDims(imageDimensions.width, imageDimensions.height);
     fixationDetectorRef.current.startTracking();
     blinkDetectorRef.current = new BlinkDetector(
       isMobileDevice() ? 0.14 : 0.20,
@@ -571,7 +582,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     setFixations([]);
     gazePointsRef.current = [];
 
-    fixationDetectorRef.current = new FixationDetector();
+    fixationDetectorRef.current = createFixationDetectorWithDims(imageDimensions.width, imageDimensions.height);
     fixationDetectorRef.current.startTracking();
     blinkDetectorRef.current = new BlinkDetector(
       isMobileDevice() ? 0.14 : 0.20,
@@ -1431,26 +1442,15 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             )}
           </div>
 
-          {/* Sadece Takibi Başlat / Durdur — kullanıcıya gelişmiş kontroller gösterilmez */}
-          <div className="flex flex-wrap gap-2 sm:gap-3 touch-manipulation">
-            {!isTracking ? (
-              <button
-                onClick={startTracking}
-                className="min-h-[44px] min-w-[44px] px-6 py-3 bg-green-600 text-white rounded-xl font-semibold hover:bg-green-500 transition shadow-lg flex items-center gap-2 focus:ring-2 focus:ring-green-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-                aria-label="Takibi başlat"
-              >
-                <span>▶</span> Takibi Başlat
-              </button>
-            ) : (
-              <button
-                onClick={stopTracking}
-                className="min-h-[44px] min-w-[44px] px-6 py-3 bg-red-600 text-white rounded-xl font-semibold hover:bg-red-500 transition shadow-lg flex items-center gap-2 focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-gray-950 focus:outline-none"
-                aria-label="Takibi durdur"
-              >
-                <span>⏹</span> Takibi Durdur
-              </button>
-            )}
-          </div>
+          {/* Takip durumu göstergesi */}
+          {isTracking && (
+            <div className="flex items-center gap-2 px-4 py-2 bg-green-900/30 border border-green-500/20 rounded-xl">
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse" />
+              <span className="text-green-400 text-sm font-medium">
+                Analiz ediliyor... {formatTime(trackingDuration)} / {formatTime(IMAGE_DURATION_MS)}
+              </span>
+            </div>
+          )}
         </div>
       )}
 

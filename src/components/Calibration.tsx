@@ -399,38 +399,65 @@ export default function Calibration({
 
   return (
     <div className="fixed inset-0 z-50 bg-gray-950 flex items-center justify-center">
-      {/* Talimat ekranı — temiz, profesyonel */}
+      {/* Talimat ekranı — kullanıcı bilgilendirmesi + kalibrasyon hazırlık */}
       {state.phase === "instructions" && (
-        <div className="bg-gray-900 rounded-2xl p-8 max-w-md mx-auto text-center shadow-2xl border border-gray-700">
-          <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-blue-500/10 border-2 border-blue-500/30 flex items-center justify-center">
+        <div className="bg-gray-900 rounded-2xl p-6 sm:p-8 max-w-lg mx-auto text-center shadow-2xl border border-gray-700 max-h-[90vh] overflow-y-auto">
+          <div className="w-20 h-20 mx-auto mb-5 rounded-full bg-blue-500/10 border-2 border-blue-500/30 flex items-center justify-center">
             <span className="text-4xl">👁️</span>
           </div>
           <h2 className="text-2xl font-bold text-white mb-2">
-            Kalibrasyon
+            Göz Takip Testi
           </h2>
-          <p className="text-gray-400 text-sm mb-6">
-            Yaklaşık 30 saniye sürer. Ekrana bakmanız yeterli.
+          <p className="text-gray-400 text-sm mb-5">
+            Bu test, göz hareketlerinizi analiz ederek görsellere nasıl baktığınızı ölçer.
           </p>
 
-          <div className="text-gray-300 space-y-2 mb-8 text-left text-sm">
-            <div className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2.5">
-              <span className="text-blue-400 text-lg">1</span>
-              <span>Başını sabit tut</span>
-            </div>
-            <div className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2.5">
-              <span className="text-blue-400 text-lg">2</span>
-              <span>Beliren noktaya sadece gözlerinle bak</span>
-            </div>
-            <div className="flex items-center gap-3 bg-gray-800/50 rounded-lg px-4 py-2.5">
-              <span className="text-blue-400 text-lg">3</span>
-              <span>Nokta kaybolana kadar bekle</span>
+          {/* Nasıl çalışır */}
+          <div className="bg-gray-800/40 rounded-xl p-4 mb-5 text-left">
+            <h3 className="text-white text-sm font-semibold mb-3">Nasıl çalışır?</h3>
+            <div className="text-gray-300 space-y-2 text-sm">
+              <div className="flex items-start gap-3">
+                <span className="text-blue-400 font-bold mt-0.5 shrink-0">1.</span>
+                <span><strong className="text-white">Kalibrasyon:</strong> Ekranda beliren noktalara bakarak sistemi gözlerinize ayarlayın. Her noktaya bakıp sabit tutmanız yeterli.</span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="text-blue-400 font-bold mt-0.5 shrink-0">2.</span>
+                <span><strong className="text-white">Doğrulama:</strong> Kalibrasyonun doğruluğu kısa bir test ile kontrol edilir.</span>
+              </div>
+              <div className="flex items-start gap-3">
+                <span className="text-blue-400 font-bold mt-0.5 shrink-0">3.</span>
+                <span><strong className="text-white">Analiz:</strong> Görseller otomatik olarak gösterilir ve göz hareketleriniz kaydedilir. Sonuçlar hemen gösterilir.</span>
+              </div>
             </div>
           </div>
 
+          {/* Önemli notlar */}
+          <div className="bg-yellow-900/20 border border-yellow-600/20 rounded-xl p-4 mb-5 text-left">
+            <h3 className="text-yellow-400 text-sm font-semibold mb-2">Doğru sonuç için:</h3>
+            <ul className="text-gray-300 text-sm space-y-1.5">
+              <li className="flex items-start gap-2">
+                <span className="text-yellow-500 shrink-0">•</span>
+                <span>Başınızı sabit tutun, sadece gözlerinizi hareket ettirin</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-yellow-500 shrink-0">•</span>
+                <span>Ekranla aranızda ~50-70 cm mesafe bırakın</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-yellow-500 shrink-0">•</span>
+                <span>Yüzünüzün iyi aydınlatılmış olduğundan emin olun</span>
+              </li>
+              <li className="flex items-start gap-2">
+                <span className="text-yellow-500 shrink-0">•</span>
+                <span>Gözlük kullanıyorsanız cam yansıması olmadığından emin olun</span>
+              </li>
+            </ul>
+          </div>
+
           {/* Kalibrasyon modu bilgisi */}
-          <div className="mb-6 px-4 py-2.5 bg-blue-600/10 border border-blue-500/20 rounded-lg">
+          <div className="mb-5 px-4 py-2.5 bg-blue-600/10 border border-blue-500/20 rounded-lg">
             <p className="text-blue-400 text-sm text-center">
-              {isMobileDevice() ? "📱 Standart kalibrasyon (16 nokta)" : "🎯 Yüksek doğruluk modu (25 nokta)"}
+              {isMobileDevice() ? "📱 Standart kalibrasyon (16 nokta) — ~30 sn" : "🎯 Yüksek doğruluk modu (25 nokta) — ~40 sn"}
             </p>
           </div>
 
@@ -439,7 +466,7 @@ export default function Calibration({
               onClick={beginCalibration}
               className="w-full px-8 py-3.5 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-500 transition shadow-lg text-base"
             >
-              Kalibrasyonu Başlat
+              Anladım, Başla
             </button>
             {storedInfo && (
               <button
