@@ -336,6 +336,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     metricsByImageRef.current[idx] = currentMetricsSnap;
     dimensionsByImageRef.current[idx] = imageDimensions;
     saccadesByImageRef.current[idx] = currentMetricsSnap.saccades;
+    logger.log(`[EyeTracker] Image ${idx} results — gazePoints: ${gazePointsByImageRef.current[idx].length}, fixations: ${currentMetricsSnap.fixationCount}, saccades: ${currentMetricsSnap.saccades.length}, ROI: ${currentMetricsSnap.roiClusters.length}`);
     blinkEventsByImageRef.current[idx] = blinkDetectorRef.current.getBlinkEvents();
     blinkMetricsByImageRef.current[idx] = blinkDetectorRef.current.getMetrics();
 
@@ -864,6 +865,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     faceTrackerRef.current.stopTracking();
 
     const currentMetrics = fixationDetectorRef.current.getMetrics();
+    logger.log(`[EyeTracker] stopTracking — gazePoints: ${gazePointsRef.current.length}, fixations: ${currentMetrics.fixationCount}, saccades: ${currentMetrics.saccades.length}, ROI: ${currentMetrics.roiClusters.length}`);
     setMetrics(currentMetrics);
 
     // Çoklu fotoğraf modunda: mevcut fotoğrafın verisini kaydet ve TÜM sonuçları birleştir
