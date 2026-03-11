@@ -270,8 +270,9 @@ export class OneEuroFilter {
   /**
    * Hareket hızına ve güven skoruna göre parametreleri dinamik ayarla (Sorun #4).
    * Confidence düşükse daha fazla smoothing, yüksekse sinyale güven.
+   * @param axis - 'y' ekseni için %30 daha fazla smoothing (göz kapağı gürültüsü)
    */
-  setDynamicParams(velocity: number, confidence: number = 1.0): void {
+  setDynamicParams(velocity: number, confidence: number = 1.0, axis: 'x' | 'y' = 'x'): void {
     // Üç aşamalı hız profili: fixation (<50px/s), pursuit (50-300), saccade (>300)
     // Confidence-aware: düşük confidence'ta farklı smoothing stratejisi
     const confFactor = Math.max(0.3, Math.min(1.0, confidence));
@@ -298,8 +299,11 @@ export class OneEuroFilter {
       cutoff = 5.0 + t * 7.0; // 5→12
       beta = 0.025 + t * 0.025; // 0.025→0.05
     }
-    this.minCutoff = cutoff * confFactor;
-    this.beta = beta * confFactor;
+
+    // Y ekseni göz kapağı etkisinden daha gürültülü → %30 daha fazla smoothing
+    const axisFactor = axis === 'y' ? 0.7 : 1.0;
+    this.minCutoff = cutoff * confFactor * axisFactor;
+    this.beta = beta * confFactor * axisFactor;
   }
 
   private alpha(cutoff: number, dt: number): number {
@@ -386,13 +390,19 @@ export class GazeModel {
   // One Euro zaten filtrelenmiş veriyi Kalman'a vermek istatistiksel olarak yanlış
   // (Kalman, ham gürültülü veri bekler). Çift filtreleme sinyal kaybı + gecikme yaratıyordu.
 
-  constructor(lambda: number = 0.002) {
+  /** lockLambda: true ise LOGO-CV lambda araması atlanır, constructor lambda'sı korunur.
+   *  Ensemble modelleri için önemli — her modelin farklı lambda kullanması gerekir. */
+  private lockLambda: boolean = false;
+
+  constructor(lambda: number = 0.002, lockLambda: boolean = false) {
     this.lambda = lambda;
+    this.lockLambda = lockLambda;
     // One Euro Filter — TEK smoothing katmanı (tüm pipeline'da).
     // minCutoff: düşük = güçlü smoothing (fixation), yüksek = hızlı takip (saccade)
     // beta: hız artınca cutoff ne kadar hızlı yükselsin
-    this.filterX = new OneEuroFilter(1.0, 0.015, 1.0);
-    this.filterY = new OneEuroFilter(1.0, 0.015, 1.0);
+    // beta=0.002: fixation moduyla tutarlı (eski 0.015 ilk frame'lerde aşırı geçişli idi)
+    this.filterX = new OneEuroFilter(1.0, 0.002, 1.0);
+    this.filterY = new OneEuroFilter(1.0, 0.002, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -599,15 +609,7 @@ export class GazeModel {
       return confWeight * spatialWeight;
     });
 
-    // Leave-one-group-out CV ile en iyi lambda seç
-    // Rastgele fold yerine kalibrasyon noktası bazlı fold → veri sızması yok, daha güvenilir
-    // Lambda aralığı: düşük değerler veriye daha iyi uyum sağlar (underfitting azalır)
-    // LOGO-CV zaten overfitting'i kontrol ediyor, bu yüzden küçük lambda'lar güvenle denenebilir
-    const lambdaCandidates = [0.00005, 0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.015, 0.03, 0.05];
-    let bestLambda = this.lambda;
-    let bestCV = Infinity;
-
-    // Örnekleri hedef noktalarına göre grupla
+    // Örnekleri hedef noktalarına göre grupla (residual cleanup'ta da kullanılacak)
     const pointGroups = new Map<string, number[]>();
     for (let i = 0; i < cleanSamples.length; i++) {
       const key = `${cleanSamples[i].targetX.toFixed(0)}_${cleanSamples[i].targetY.toFixed(0)}`;
@@ -616,47 +618,58 @@ export class GazeModel {
     }
     const groupKeys = Array.from(pointGroups.keys());
 
-    if (groupKeys.length >= 5) {
-      for (const lam of lambdaCandidates) {
-        let totalErr = 0;
-        let count = 0;
-        for (const holdoutKey of groupKeys) {
-          const holdoutIndices = new Set(pointGroups.get(holdoutKey)!);
-          const trainPoly: number[][] = [];
-          const trainTX: number[] = [];
-          const trainTY: number[] = [];
-          const trainW: number[] = [];
-          for (let i = 0; i < polyFeatures.length; i++) {
-            if (!holdoutIndices.has(i)) {
-              trainPoly.push(polyFeatures[i]);
-              trainTX.push(targetsX[i]);
-              trainTY.push(targetsY[i]);
-              trainW.push(sampleWeights[i]);
+    // LOGO-CV: lockLambda aktifse atla (ensemble model çeşitliliği korunur)
+    if (!this.lockLambda) {
+      // Leave-one-group-out CV ile en iyi lambda seç
+      // Rastgele fold yerine kalibrasyon noktası bazlı fold → veri sızması yok, daha güvenilir
+      const lambdaCandidates = [0.00005, 0.0001, 0.0003, 0.0005, 0.001, 0.002, 0.004, 0.008, 0.015, 0.03, 0.05];
+      let bestLambda = this.lambda;
+      let bestCV = Infinity;
+
+      if (groupKeys.length >= 5) {
+        for (const lam of lambdaCandidates) {
+          let totalErr = 0;
+          let count = 0;
+          for (const holdoutKey of groupKeys) {
+            const holdoutIndices = new Set(pointGroups.get(holdoutKey)!);
+            const trainPoly: number[][] = [];
+            const trainTX: number[] = [];
+            const trainTY: number[] = [];
+            const trainW: number[] = [];
+            for (let i = 0; i < polyFeatures.length; i++) {
+              if (!holdoutIndices.has(i)) {
+                trainPoly.push(polyFeatures[i]);
+                trainTX.push(targetsX[i]);
+                trainTY.push(targetsY[i]);
+                trainW.push(sampleWeights[i]);
+              }
+            }
+            if (trainPoly.length < 40) continue;
+            const wx = ridgeRegression(trainPoly, trainTX, lam, trainW);
+            const wy = ridgeRegression(trainPoly, trainTY, lam, trainW);
+            for (const idx of Array.from(holdoutIndices)) {
+              let px = 0, py = 0;
+              for (let j = 0; j < polyFeatures[idx].length; j++) {
+                px += polyFeatures[idx][j] * (wx[j] || 0);
+                py += polyFeatures[idx][j] * (wy[j] || 0);
+              }
+              totalErr += Math.sqrt((px - targetsX[idx]) ** 2 + (py - targetsY[idx]) ** 2);
+              count++;
             }
           }
-          if (trainPoly.length < 40) continue;
-          const wx = ridgeRegression(trainPoly, trainTX, lam, trainW);
-          const wy = ridgeRegression(trainPoly, trainTY, lam, trainW);
-          for (const idx of Array.from(holdoutIndices)) {
-            let px = 0, py = 0;
-            for (let j = 0; j < polyFeatures[idx].length; j++) {
-              px += polyFeatures[idx][j] * (wx[j] || 0);
-              py += polyFeatures[idx][j] * (wy[j] || 0);
-            }
-            totalErr += Math.sqrt((px - targetsX[idx]) ** 2 + (py - targetsY[idx]) ** 2);
-            count++;
+          if (count === 0) continue;
+          const avgErr = totalErr / count;
+          if (avgErr < bestCV) {
+            bestCV = avgErr;
+            bestLambda = lam;
           }
         }
-        if (count === 0) continue;
-        const avgErr = totalErr / count;
-        if (avgErr < bestCV) {
-          bestCV = avgErr;
-          bestLambda = lam;
-        }
+        logger.log("[GazeModel] LOGO-CV en iyi lambda:", bestLambda, "| CV hata:", bestCV.toFixed(1));
       }
-      logger.log("[GazeModel] LOGO-CV en iyi lambda:", bestLambda, "| CV hata:", bestCV.toFixed(1));
+      this.lambda = bestLambda;
+    } else {
+      logger.log("[GazeModel] Lambda kilitli:", this.lambda, "(ensemble çeşitliliği korunuyor)");
     }
-    this.lambda = bestLambda;
 
     // Weighted Ridge regression ile ağırlıkları hesapla
     this.weightsX = ridgeRegression(polyFeatures, targetsX, this.lambda, sampleWeights);
@@ -679,8 +692,33 @@ export class GazeModel {
       return { i, err: rawErr / edgeFactor };
     });
     residuals.sort((a, b) => b.err - a.err);
-    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.12), Math.max(0, cleanSamples.length - 80));
-    const dropSet = new Set(residuals.slice(0, dropCount).map((r) => r.i));
+    // Drop oranı %12→%8: köşe noktaları orantısız etkileniyordu
+    const dropCount = Math.min(Math.floor(cleanSamples.length * 0.08), Math.max(0, cleanSamples.length - 80));
+    const dropCandidates = new Set(residuals.slice(0, dropCount).map((r) => r.i));
+
+    // Grup koruma: hiçbir kalibrasyon noktasından %25'ten fazla örnek atılmasın
+    const groupDropCounts = new Map<string, number>();
+    for (const idx of dropCandidates) {
+      const key = `${cleanSamples[idx].targetX.toFixed(0)}_${cleanSamples[idx].targetY.toFixed(0)}`;
+      groupDropCounts.set(key, (groupDropCounts.get(key) || 0) + 1);
+    }
+    const dropSet = new Set(dropCandidates);
+    for (const [key, count] of groupDropCounts) {
+      const groupSize = pointGroups.get(key)?.length || 0;
+      const allowedDrop = Math.floor(groupSize * 0.25);
+      if (count > allowedDrop) {
+        // Bu gruptaki fazla drop'ları koru (en düşük hatalıları geri ekle)
+        const groupIndices = residuals
+          .filter(r => dropCandidates.has(r.i) && `${cleanSamples[r.i].targetX.toFixed(0)}_${cleanSamples[r.i].targetY.toFixed(0)}` === key)
+          .reverse(); // düşük hatadan yükseğe
+        let removed = count;
+        for (const r of groupIndices) {
+          if (removed <= allowedDrop) break;
+          dropSet.delete(r.i);
+          removed--;
+        }
+      }
+    }
     if (dropCount > 0) {
       const cleanSamples2 = cleanSamples.filter((_, i) => !dropSet.has(i));
       const rawInputs2 = cleanSamples2.map((s) => this.featuresToInput(s.features));
@@ -859,9 +897,10 @@ export class GazeModel {
 
     const now = performance.now();
 
-    // Hız hesapla (adaptive smoothing için)
+    // Hız hesapla (adaptive smoothing için) — X ve Y ayrı
     // Sorun #16: Zaman boşluklarını (blink, tracking loss) kontrol et
-    let velocity = 0;
+    let velocityX = 0;
+    let velocityY = 0;
     if (this.predictionHistory.length > 0) {
       const last = this.predictionHistory[this.predictionHistory.length - 1];
       const dx = raw.x - last.x;
@@ -869,17 +908,20 @@ export class GazeModel {
       const dt = (now - last.t) / 1000; // saniye
       // 150ms'den uzun boşluk → blink/kayıp, velocity'yi sıfırla ve filtreyi resetle
       if (dt > 0.15) {
-        velocity = 0;
+        velocityX = 0;
+        velocityY = 0;
         this.filterX.reset();
         this.filterY.reset();
       } else if (dt > 0) {
-        velocity = Math.sqrt(dx * dx + dy * dy) / dt;
+        velocityX = Math.abs(dx) / dt;
+        velocityY = Math.abs(dy) / dt;
       }
     }
-    
+
     // Hareket hızına ve güven skoruna göre filter parametrelerini ayarla (Sorun #4)
-    this.filterX.setDynamicParams(velocity, features.confidence);
-    this.filterY.setDynamicParams(velocity, features.confidence);
+    // X ve Y ayrı: Y ekseni göz kapağı gürültüsünden daha fazla etkilenir
+    this.filterX.setDynamicParams(velocityX, features.confidence, 'x');
+    this.filterY.setDynamicParams(velocityY, features.confidence, 'y');
 
     // Affine veya drift correction uygula
     let correctedX: number;

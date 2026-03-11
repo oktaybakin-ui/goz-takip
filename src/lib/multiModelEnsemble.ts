@@ -42,8 +42,10 @@ export class MultiModelEnsemble {
   }
 
   private initializeModels(): void {
+    // lockLambda: true → LOGO-CV lambda araması atlanır, her model kendi lambda'sını korur.
+    // Bu sayede ensemble çeşitliliği sağlanır (düşük/orta/yüksek regularization).
     this.models = this.config.modelConfigs.map(config =>
-      new GazeModel(config.lambda)
+      new GazeModel(config.lambda, true)
     );
     this.modelWeights = new Array(this.models.length).fill(1 / this.models.length);
   }

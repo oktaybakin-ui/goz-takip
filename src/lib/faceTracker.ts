@@ -126,6 +126,10 @@ export class FaceTracker {
   private glassesDetectedFrames: number = 0;
   private readonly GLASSES_FRAME_THRESHOLD = 10; // 10+ frame → gözlük moduna geç
 
+  // Temporal jitter tespiti: frame-to-frame iris titreşimini ölçer
+  private recentIrisForJitter: { x: number; y: number }[] = [];
+  private readonly JITTER_BUFFER_SIZE = 5;
+
   constructor() {
     // No-op: landmark filtreleri kaldırıldı — model çıktısındaki One Euro Filter
     // tek başına yeterli (çift filtreleme ~80ms gecikme ekliyordu)
@@ -668,50 +672,68 @@ export class FaceTracker {
     const leftEyeWidth = this.getEyeWidth(landmarks, LEFT_EYE_INDICES);
     const rightEyeWidth = this.getEyeWidth(landmarks, RIGHT_EYE_INDICES);
 
-    // Sürekli çok faktörlü güven skoru
-    let confidence = 1.0;
+    // Sürekli çok faktörlü güven skoru — bileşik penalty yumuşatma
+    // Penaltileri diziye topla, en kötü * geri kalanların geometrik ortalaması formülü
+    const penalties: number[] = [];
     const mobile = isMobileDevice();
+    let hardZero = false;
 
     // Sorun #9: Tutarlı EAR eşikleri — gazeModel.ts ile senkronize
     // Mobilde kamera açısı ve çözünürlük nedeniyle EAR değerleri daha düşük algılanıyor
     const eyeOpennessThresh = mobile ? 0.07 : 0.15;
     if (eyeOpenness < eyeOpennessThresh) {
-      confidence *= Math.max(0, eyeOpenness / eyeOpennessThresh);
+      penalties.push(Math.max(0, eyeOpenness / eyeOpennessThresh));
     }
 
     // Sorun #10: Yüz boyutu faktörü — mobil eşik kalibre edildi
     const minFaceScale = mobile ? 0.06 : 0.08;
     if (faceScale < minFaceScale) {
-      confidence *= Math.max(0.1, faceScale / minFaceScale);
+      penalties.push(Math.max(0.1, faceScale / minFaceScale));
     }
 
     // İris tespit edilemedi — fallback (0.5, 0.5) veya (0, 0) kontrolü
-    // getIrisCenter landmark bulamadığında (0.5, 0.5) döner, eski kontrol sadece (0,0) bakıyordu
     const irisLikelyFailed = (leftIris.x === 0 && leftIris.y === 0) ||
       (leftIrisStable.x === 0.5 && leftIrisStable.y === 0.5 &&
        rightIrisStable.x === 0.5 && rightIrisStable.y === 0.5);
-    if (irisLikelyFailed) confidence = 0;
+    if (irisLikelyFailed) hardZero = true;
 
-    // Sorun #30: Temel occlusion tespiti — iris merkezi göz konturu dışındaysa güven düşür
-    // Pupil radius çok küçükse iris kısmen örtülü olabilir (göz kapağı, saç, gözlük)
+    // Sorun #30: Temel occlusion tespiti
     if (pupilRadius > 0 && pupilRadius < 0.005) {
-      confidence *= 0.35;
+      penalties.push(0.35);
     }
 
-    // Gözlük tespiti: sürekli Z varyansı yüksekse confidence düşür
+    // Gözlük tespiti
     if (this.glassesDetectedFrames > this.GLASSES_FRAME_THRESHOLD) {
-      confidence *= 0.65; // Gözlük modunda confidence düşür (iris landmark'lar yansımadan etkileniyor)
+      penalties.push(0.65);
     }
 
-    // İris göreceli pozisyon aşırı uç ise güven düşür — mobilde daha toleranslı
+    // İris göreceli pozisyon aşırı uç ise güven düşür
     const irisLo = mobile ? -0.5 : -0.3;
     const irisHi = mobile ? 1.5 : 1.3;
     const irisRange = (v: number) => v < irisLo ? Math.max(0.2, 1 + (v - irisLo) * 2) :
                                       v > irisHi ? Math.max(0.2, 1 - (v - irisHi) * 2) : 1;
-    confidence *= Math.min(irisRange(leftRel.x), irisRange(rightRel.x));
-    confidence *= Math.min(irisRange(leftRel.y), irisRange(rightRel.y));
+    const irisRangeX = Math.min(irisRange(leftRel.x), irisRange(rightRel.x));
+    const irisRangeY = Math.min(irisRange(leftRel.y), irisRange(rightRel.y));
+    if (irisRangeX < 1) penalties.push(irisRangeX);
+    if (irisRangeY < 1) penalties.push(irisRangeY);
 
-    // Sorun #14: Sol-sağ iris tutarsızlığı — mobil/masaüstü eşikler yakınlaştırıldı
+    // Temporal jitter tespiti
+    const avgIrisJitterX = (leftRel.x + rightRel.x) / 2;
+    const avgIrisJitterY = (leftRel.y + rightRel.y) / 2;
+    this.recentIrisForJitter.push({ x: avgIrisJitterX, y: avgIrisJitterY });
+    if (this.recentIrisForJitter.length > this.JITTER_BUFFER_SIZE) this.recentIrisForJitter.shift();
+    if (this.recentIrisForJitter.length >= 3) {
+      const jMeanX = this.recentIrisForJitter.reduce((s, p) => s + p.x, 0) / this.recentIrisForJitter.length;
+      const jMeanY = this.recentIrisForJitter.reduce((s, p) => s + p.y, 0) / this.recentIrisForJitter.length;
+      const jStdX = Math.sqrt(this.recentIrisForJitter.reduce((s, p) => s + (p.x - jMeanX) ** 2, 0) / this.recentIrisForJitter.length);
+      const jStdY = Math.sqrt(this.recentIrisForJitter.reduce((s, p) => s + (p.y - jMeanY) ** 2, 0) / this.recentIrisForJitter.length);
+      const jitterStd = Math.max(jStdX, jStdY);
+      if (jitterStd > 0.02) {
+        penalties.push(Math.max(0.4, 1 - (jitterStd - 0.02) * 10));
+      }
+    }
+
+    // Sorun #14: Sol-sağ iris tutarsızlığı
     const irisAsymX = Math.abs(leftRel.x - rightRel.x);
     const irisAsymY = Math.abs(leftRel.y - rightRel.y);
     const asymTolerance = Math.min(Math.abs(headPose.yaw) * 1.5, 0.25);
@@ -719,9 +741,26 @@ export class FaceTracker {
     const asymBaseY = mobile ? 0.22 : 0.20;
     const asymThreshX = asymBaseX + asymTolerance;
     const asymThreshY = asymBaseY + asymTolerance * 0.5;
-    // Yumuşak Gaussian ceza (ani düşüş yerine kademeli azalma)
-    if (irisAsymX > asymThreshX) confidence *= Math.max(0.3, Math.exp(-2 * (irisAsymX - asymThreshX) ** 2));
-    if (irisAsymY > asymThreshY) confidence *= Math.max(0.3, Math.exp(-2 * (irisAsymY - asymThreshY) ** 2));
+    if (irisAsymX > asymThreshX) penalties.push(Math.max(0.3, Math.exp(-2 * (irisAsymX - asymThreshX) ** 2)));
+    if (irisAsymY > asymThreshY) penalties.push(Math.max(0.3, Math.exp(-2 * (irisAsymY - asymThreshY) ** 2)));
+
+    // Bileşik penalty hesapla: en kötü penalty × geri kalanların geometrik ortalaması
+    // Bu, saf çarpımdan daha yumuşak: birden fazla orta penalty aşırı düşürmez
+    let confidence: number;
+    if (hardZero) {
+      confidence = 0;
+    } else if (penalties.length === 0) {
+      confidence = 1.0;
+    } else if (penalties.length === 1) {
+      confidence = penalties[0];
+    } else {
+      penalties.sort((a, b) => a - b); // En kötü (en düşük) önce
+      const worst = penalties[0];
+      const rest = penalties.slice(1);
+      // Geometrik ortalama: (p1 * p2 * ... * pn) ^ (1/n)
+      const geoMean = Math.exp(rest.reduce((s, p) => s + Math.log(Math.max(0.01, p)), 0) / rest.length);
+      confidence = worst * geoMean;
+    }
 
     // Debug: Her 120 frame'de bir iris pozisyonlarını logla
     // NOT: frameCount artırılmaz, processFrame() içinde zaten artırılıyor

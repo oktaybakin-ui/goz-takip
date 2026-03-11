@@ -110,7 +110,8 @@ export async function POST(request: NextRequest) {
       participantId: participant.id,
       sessionId: session.id,
     });
-  } catch {
+  } catch (err) {
+    console.error("[register] Error:", err);
     return NextResponse.json({ error: "Geçersiz istek." }, { status: 400 });
   }
 }

@@ -418,7 +418,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   }, [showTransitionOverlay]);
 
   // Kalibrasyon tamamlandı (bias CalibrationManager içinde modele uygulandı)
-  const handleCalibrationComplete = useCallback((meanError: number, samples?: any[]) => {
+  const handleCalibrationComplete = useCallback((meanError: number, samples?: any[], validationSamples?: any[]) => {
     setCalibrationError(meanError);
     setPhase("tracking");
 
@@ -430,22 +430,24 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     if (samples && samples.length > 0 && ensembleRef.current) {
       const ensemble = ensembleRef.current;
       logger.log("[EyeTracker] Training ensemble with", samples.length, "samples");
+
+      // Gerçek doğrulama verileri varsa onları kullan, yoksa son %20'yi fallback olarak kullan
+      const weightUpdateSamples = (validationSamples && validationSamples.length >= 5)
+        ? validationSamples
+        : samples.slice(Math.floor(samples.length * 0.8));
+
       ensemble.trainAsync(samples).then(() => {
-        // Eğitim sonrası ağırlıkları validation sample'larıyla güncelle
-        // Son %20'yi validation olarak kullan (farklı noktalardan geliyorlar)
-        const valStart = Math.floor(samples.length * 0.8);
-        const valSamples = samples.slice(valStart);
-        if (valSamples.length >= 5) {
-          ensemble.updateWeights(valSamples);
+        if (weightUpdateSamples.length >= 5) {
+          ensemble.updateWeights(weightUpdateSamples);
+          logger.log("[EyeTracker] Ensemble weights updated with",
+            weightUpdateSamples.length, "validation samples",
+            validationSamples && validationSamples.length >= 5 ? "(real)" : "(fallback)");
         }
       }).catch((err) => {
         logger.warn("[EyeTracker] Ensemble async training failed, trying sync:", err);
         try {
           ensemble.train(samples);
-          // Sync sonrası da ağırlık güncelle
-          const valStart = Math.floor(samples.length * 0.8);
-          const valSamples = samples.slice(valStart);
-          if (valSamples.length >= 5) ensemble.updateWeights(valSamples);
+          if (weightUpdateSamples.length >= 5) ensemble.updateWeights(weightUpdateSamples);
         } catch { /* ignore */ }
       });
     }

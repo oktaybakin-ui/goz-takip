@@ -19,7 +19,7 @@ import GazePreview, { AffinePoint } from "./GazePreview";
 interface CalibrationProps {
   model: GazeModel;
   faceTracker: FaceTracker;
-  onComplete: (meanError: number, samples?: any[]) => void;
+  onComplete: (meanError: number, samples?: any[], validationSamples?: any[]) => void;
   onCancel?: () => void;
 }
 
@@ -46,6 +46,7 @@ export default function Calibration({
   const validationBiasesRef = useRef<{ biasX: number; biasY: number; relX: number; relY: number }[]>([]);
   const affinePointsRef = useRef<{ predX: number; predY: number; trueX: number; trueY: number }[]>([]);
   const validationPointRef = useRef<{ relX: number; relY: number } | null>(null);
+  const validationCalibSamplesRef = useRef<{ features: EyeFeatures; targetX: number; targetY: number }[]>([]);
   const phaseRef = useRef<string>("idle");
   const hasAutoTransitionedRef = useRef(false);
   const [storedInfo, setStoredInfo] = useState<ReturnType<typeof loadCalibration>>(null);
@@ -234,6 +235,15 @@ export default function Calibration({
       if (features && features.confidence > valMinConf) {
         const result = manager.addValidationSample(features);
         if (result) {
+          // Ensemble ağırlık güncellemesi için validation sample'ı biriktir
+          const valPtForSample = manager.getCurrentValidationPoint();
+          if (valPtForSample) {
+            validationCalibSamplesRef.current.push({
+              features: { ...features },
+              targetX: valPtForSample.x,
+              targetY: valPtForSample.y,
+            });
+          }
           errors.push(result.error);
           const pt = validationPointRef.current ?? { relX: 0.5, relY: 0.5 };
           validationBiasesRef.current.push({
@@ -257,6 +267,7 @@ export default function Calibration({
       animFrameRef.current = requestAnimationFrame(validationLoop);
     };
 
+    validationCalibSamplesRef.current = []; // Yeni doğrulama için temizle
     validationPointRef.current = manager.getCurrentValidationPoint()
       ? { relX: manager.getCurrentValidationPoint()!.relX, relY: manager.getCurrentValidationPoint()!.relY }
       : null;
@@ -306,10 +317,12 @@ export default function Calibration({
     if (!manager) return;
     const state = manager.getState();
     const meanError = state.meanError || 0;
-    
+
     // Kalibrasyon sample'larını gönder (ensemble için)
     const samples = state.samples || [];
-    onComplete(meanError, samples);
+    // Gerçek doğrulama sample'larını da gönder (ensemble ağırlık güncellemesi için)
+    const validationSamples = validationCalibSamplesRef.current;
+    onComplete(meanError, samples, validationSamples);
   }, [onComplete]);
 
   const handleLoadStored = useCallback(() => {

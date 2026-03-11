@@ -214,7 +214,7 @@ export class CalibrationManager {
   private readonly IRIS_BUFFER_SIZE = 10; // 5→10: daha uzun pencere, medium-term drift yakalama
   private readonly IRIS_STD_MAX = isMobileDevice() ? 0.045 : 0.035;  // Sıkılaştırıldı
   private prevPoseForCalib: { yaw: number; pitch: number } | null = null;
-  private MIN_SAMPLES_PER_POINT = isMobileDevice() ? 28 : 30;        // Artırıldı: daha güvenilir ortalama
+  private baseSamplesPerPoint = isMobileDevice() ? 28 : 30;          // Temel örnek sayısı (adaptif olarak artırılır)
   private gridSize: GridSize | undefined = undefined;
   private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.15 : 0.35; // Sıkılaştırıldı: düşük kalite veri reddedilir
   private readonly RETRY_QUALITY_THRESHOLD = 3; // Kalite < 3 ise retry
@@ -272,7 +272,26 @@ export class CalibrationManager {
       return;
     }
     this.gridSize = size;
-    this.MIN_SAMPLES_PER_POINT = getMinSamplesPerPoint(size);
+    this.baseSamplesPerPoint = getMinSamplesPerPoint(size);
+  }
+
+  /**
+   * Adaptif örnek sayısı: köşe/kenar noktaları daha fazla örnek toplar.
+   * Polinom regresyon kenar bölgelerde extrapolation yapar — daha fazla veri bu bölgelerde
+   * modelin uyumunu iyileştirir.
+   * Köşeler: 1.5x, kenarlar: 1.25x, merkez/iç: 1.0x
+   */
+  private getAdaptiveSampleCount(point: CalibrationPoint): number {
+    const isEdgeX = point.relX < 0.2 || point.relX > 0.8;
+    const isEdgeY = point.relY < 0.2 || point.relY > 0.8;
+    if (isEdgeX && isEdgeY) {
+      // Köşe noktası — en zor bölge
+      return Math.round(this.baseSamplesPerPoint * 1.5);
+    } else if (isEdgeX || isEdgeY) {
+      // Kenar noktası
+      return Math.round(this.baseSamplesPerPoint * 1.25);
+    }
+    return this.baseSamplesPerPoint;
   }
 
   // Kalibrasyonu başlat - TAM EKRAN boyutları kullanılır
@@ -408,11 +427,12 @@ export class CalibrationManager {
     this.state.samplesPerPoint.set(point.id, pointSamples);
     this.state.samples.push(sample);
 
-    const progress = 10 + (pointSamples.length / this.MIN_SAMPLES_PER_POINT) * 90;
+    const requiredSamples = this.getAdaptiveSampleCount(point);
+    const progress = 10 + (pointSamples.length / requiredSamples) * 90;
     this.updateState({ progress: Math.min(100, progress) });
     this.pointQuality.set(point.id, pointSamples.length);
 
-    return pointSamples.length >= this.MIN_SAMPLES_PER_POINT;
+    return pointSamples.length >= requiredSamples;
   }
 
   async nextPoint(): Promise<boolean> {

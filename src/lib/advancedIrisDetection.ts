@@ -254,9 +254,14 @@ export class AdvancedIrisDetector {
     let weightedRadius = 0;
     let weightedConfidence = 0;
 
-    // Sabit decay: adaptive decay periferik bakışta amplitüd kaybına neden oluyordu
-    // 0.75 dengeli: gürültüyü bastırır ama sinyali kırpmaz (~5-10% amplitüd kaybı)
-    const decay = 0.75;
+    // Hız-adaptif decay: saccade sırasında son frame'e güven, fixation'da daha fazla smoothing
+    const prev = history[history.length - 2];
+    const dx = current.center.x - prev.center.x;
+    const dy = current.center.y - prev.center.y;
+    const movement = Math.sqrt(dx * dx + dy * dy);
+    // movement > 0.015 → saccade (hızlı hareket), < 0.005 → fixation (sabit bakış)
+    // Saccade: decay=1.5 (son frame ağırlıklı), fixation: decay=0.65 (daha fazla smoothing)
+    const decay = Math.min(1.5, Math.max(0.65, 0.65 + movement * 60));
 
     history.forEach((features, i) => {
       // Confidence-weighted: her frame'in kendi kalitesi de ağırlığa katılır
