@@ -39,10 +39,21 @@ interface EyeTrackerProps {
 
 type AppPhase = "loading" | "camera_init" | "pupil_align" | "calibration" | "tracking" | "results";
 
-/** Görüntü koordinat alanına uygun FixationDetector oluşturur */
-function createFixationDetectorWithDims(w: number, h: number): FixationDetector {
-  const imageDiag = (w > 0 && h > 0) ? Math.sqrt(w * w + h * h) : 0;
-  return new FixationDetector(0, 100, 0, 0, 3, "ivt", 0, 150, 8000, imageDiag);
+/**
+ * FixationDetector oluşturur.
+ *
+ * KRİTİK: screenToImageCoords() sonrasında koordinatlar image display
+ * biriminde ama piksel ölçeği ekranla aynı (1:1 mapping, sadece offset kayar).
+ * Bu yüzden hız eşikleri EKRAN diagonal'ine göre hesaplanmalı.
+ * Image diagonal kullanmak threshold'ları çok düşük yapar → tüm veriler
+ * saccade olarak sınıflandırılır → fixation sayısı = 0.
+ */
+function createFixationDetectorWithDims(_w: number, _h: number): FixationDetector {
+  // Ekran diagonal'ini kullan — gaze velocity ekran piksel hızına eşit
+  const screenDiag = typeof window !== "undefined"
+    ? Math.sqrt(window.innerWidth ** 2 + window.innerHeight ** 2)
+    : 2203;
+  return new FixationDetector(0, 100, 0, 0, 2, "ivt", 0, 150, 8000, screenDiag);
 }
 
 export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, sessionId }: EyeTrackerProps) {
@@ -584,6 +595,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
 
     fixationDetectorRef.current = createFixationDetectorWithDims(imageDimensions.width, imageDimensions.height);
     fixationDetectorRef.current.startTracking();
+    logger.log(`[EyeTracker] startTracking — imageDims: ${imageDimensions.width}x${imageDimensions.height}, screenDiag: ${Math.round(Math.sqrt(window.innerWidth**2 + window.innerHeight**2))}`);
     blinkDetectorRef.current = new BlinkDetector(
       isMobileDevice() ? 0.14 : 0.20,
       isMobileDevice() ? 4 : 3,

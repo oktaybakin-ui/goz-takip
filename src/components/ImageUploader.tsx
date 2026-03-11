@@ -5,6 +5,7 @@ import NextImage from "next/image";
 import { useLang } from "@/contexts/LangContext";
 import { cropImagesToFace } from "@/lib/faceCrop";
 import { CROP_TIMEOUT_MS } from "@/constants";
+import ImageCropModal from "@/components/ImageCropModal";
 
 const MIN_IMAGE_COUNT = 1;
 const MAX_IMAGE_COUNT = 10;
@@ -22,6 +23,7 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
   const [isCropping, setIsCropping] = useState(false);
   const [croppingProgress, setCroppingProgress] = useState({ current: 0, total: 0 });
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [croppingIndex, setCroppingIndex] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const addMoreInputRef = useRef<HTMLInputElement>(null);
 
@@ -99,6 +101,19 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
       return prev.filter((_, i) => i !== index);
     });
   }, []);
+
+  const handleCropDone = useCallback((croppedBlob: Blob) => {
+    if (croppingIndex === null) return;
+    const url = URL.createObjectURL(croppedBlob);
+    setPreviews((prev) => {
+      const updated = [...prev];
+      const oldUrl = updated[croppingIndex];
+      if (oldUrl?.startsWith("blob:")) URL.revokeObjectURL(oldUrl);
+      updated[croppingIndex] = url;
+      return updated;
+    });
+    setCroppingIndex(null);
+  }, [croppingIndex]);
 
   const cropTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   useEffect(() => {
@@ -268,14 +283,25 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
                 <span className="absolute top-1 left-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">
                   {i + 1}
                 </span>
-                <button
-                  type="button"
-                  onClick={() => removePreview(i)}
-                  className="absolute top-1 right-1 w-8 h-8 sm:w-6 sm:h-6 rounded-full bg-red-600/90 text-white text-sm opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition touch-manipulation flex items-center justify-center"
-                  aria-label={t.remove}
-                >
-                  ×
-                </button>
+                <div className="absolute top-1 right-1 flex gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCroppingIndex(i)}
+                    className="w-8 h-8 sm:w-6 sm:h-6 rounded-full bg-blue-600/90 text-white text-sm opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition touch-manipulation flex items-center justify-center"
+                    aria-label="Kırp"
+                    title="Kırp"
+                  >
+                    ✂
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => removePreview(i)}
+                    className="w-8 h-8 sm:w-6 sm:h-6 rounded-full bg-red-600/90 text-white text-sm opacity-80 sm:opacity-0 sm:group-hover:opacity-100 transition touch-manipulation flex items-center justify-center"
+                    aria-label={t.remove}
+                  >
+                    ×
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -367,6 +393,15 @@ export default function ImageUploader({ onImagesSelected }: ImageUploaderProps) 
             </div>
           )}
         </div>
+      )}
+
+      {/* Kırpma Modalı */}
+      {croppingIndex !== null && previews[croppingIndex] && (
+        <ImageCropModal
+          imageUrl={previews[croppingIndex]}
+          onCrop={handleCropDone}
+          onCancel={() => setCroppingIndex(null)}
+        />
       )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 mt-6 sm:mt-12 max-w-4xl w-full">

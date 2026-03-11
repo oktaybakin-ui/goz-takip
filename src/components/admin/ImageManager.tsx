@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import type { TestImageRow } from "@/types/database";
+import ImageCropModal from "@/components/ImageCropModal";
 
 export default function ImageManager() {
   const [images, setImages] = useState<TestImageRow[]>([]);
@@ -10,6 +11,8 @@ export default function ImageManager() {
   const [uploadProgress, setUploadProgress] = useState({ current: 0, total: 0 });
   const [error, setError] = useState<string | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [croppingImage, setCroppingImage] = useState<TestImageRow | null>(null);
+  const [cropUploading, setCropUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const fetchImages = useCallback(async () => {
@@ -117,6 +120,30 @@ export default function ImageManager() {
     }
   };
 
+  const handleCrop = useCallback(async (blob: Blob) => {
+    if (!croppingImage) return;
+    setCropUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", blob, "cropped.jpg");
+      const res = await fetch(`/api/admin/images/${croppingImage.id}`, {
+        method: "PUT",
+        body: form,
+      });
+      if (res.ok) {
+        setCroppingImage(null);
+        fetchImages();
+      } else {
+        const data = await res.json();
+        setError(data.error || "Kırpma yüklemesi başarısız.");
+      }
+    } catch {
+      setError("Kırpma yüklemesi başarısız.");
+    } finally {
+      setCropUploading(false);
+    }
+  }, [croppingImage, fetchImages]);
+
   if (loading) {
     return <div className="text-gray-400">Yükleniyor...</div>;
   }
@@ -212,6 +239,7 @@ export default function ImageManager() {
                       onClick={() => moveImage(i, -1)}
                       disabled={i === 0}
                       className="w-7 h-7 rounded bg-gray-700 text-white text-xs hover:bg-gray-600 disabled:opacity-30"
+                      title="Sola taşı"
                     >
                       ←
                     </button>
@@ -219,8 +247,16 @@ export default function ImageManager() {
                       onClick={() => moveImage(i, 1)}
                       disabled={i === images.length - 1}
                       className="w-7 h-7 rounded bg-gray-700 text-white text-xs hover:bg-gray-600 disabled:opacity-30"
+                      title="Sağa taşı"
                     >
                       →
+                    </button>
+                    <button
+                      onClick={() => setCroppingImage(img)}
+                      className="w-7 h-7 rounded bg-blue-600 text-white text-xs hover:bg-blue-500"
+                      title="Kırp"
+                    >
+                      ✂
                     </button>
                   </div>
                   <button
@@ -239,6 +275,23 @@ export default function ImageManager() {
       <p className="text-gray-500 text-sm">
         Toplam {images.length} görsel. Kullanıcılar teste başladığında bu görselleri sırayla görecek.
       </p>
+
+      {/* Kırpma Modalı */}
+      {croppingImage && (
+        <ImageCropModal
+          imageUrl={croppingImage.image_url}
+          onCrop={handleCrop}
+          onCancel={() => setCroppingImage(null)}
+        />
+      )}
+
+      {/* Kırpma yükleniyor overlay */}
+      {cropUploading && (
+        <div className="fixed inset-0 z-[110] bg-black/70 flex flex-col items-center justify-center gap-3">
+          <div className="animate-spin w-10 h-10 border-4 border-blue-500 border-t-transparent rounded-full" />
+          <p className="text-white text-sm">Kırpılmış görsel yükleniyor...</p>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import React, { useState, FormEvent } from "react";
 import { useLang } from "@/contexts/LangContext";
 import { validateTC } from "@/lib/tcValidation";
+import DemoPreview from "@/components/DemoPreview";
 
 interface RegistrationFormProps {
   onRegistered: (data: { participantId: string; sessionId: string }) => void;
@@ -55,7 +56,7 @@ export default function RegistrationForm({ onRegistered }: RegistrationFormProps
   };
 
   return (
-    <div className="flex items-center justify-center min-h-screen bg-gray-950 p-4">
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-950 p-4 gap-4">
       <div className="absolute top-4 right-4 flex items-center gap-2 z-10">
         <span className="text-gray-500 text-sm">TR</span>
         <button
@@ -118,6 +119,9 @@ export default function RegistrationForm({ onRegistered }: RegistrationFormProps
 
         <p className="text-gray-600 text-xs mt-4 text-center">{t.privacyNote}</p>
       </form>
+
+      {/* Demo/açıklama görseli */}
+      <DemoPreview />
     </div>
   );
 }
