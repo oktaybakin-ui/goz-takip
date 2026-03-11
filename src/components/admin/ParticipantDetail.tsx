@@ -3,6 +3,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import StatusBadge from "./StatusBadge";
 import { HeatmapGenerator } from "@/lib/heatmap";
+import GazeReplay from "@/components/GazeReplay";
 import type { GazePoint } from "@/lib/gazeModel";
 import type { Fixation } from "@/lib/fixation";
 import type { ImageResultRow, TestSessionWithParticipant } from "@/types/database";
@@ -20,6 +21,7 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
   const [data, setData] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedImage, setSelectedImage] = useState(0);
+  const [viewTab, setViewTab] = useState<"heatmap" | "replay">("heatmap");
   const heatmapCanvasRef = useRef<HTMLCanvasElement>(null);
   const heatmapGenRef = useRef<HeatmapGenerator | null>(null);
 
@@ -149,41 +151,78 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
           {currentResult && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Image with overlay */}
-              <div className="bg-gray-900 rounded-xl border border-gray-800 p-4">
-                <div className="relative">
-                  <img
-                    src={currentResult.image_url}
-                    alt={`Foto ${selectedImage + 1}`}
-                    className="w-full rounded-lg"
-                  />
-                  {/* Heatmap overlay — gaze verilerinden client-side render */}
-                  <canvas
-                    ref={heatmapCanvasRef}
-                    className="absolute inset-0 w-full h-full rounded-lg object-contain"
-                    style={{ opacity: 0.6 }}
-                  />
-                  {/* Fixation points */}
-                  <svg
-                    className="absolute inset-0 w-full h-full"
-                    viewBox={`0 0 ${currentResult.image_width} ${currentResult.image_height}`}
-                    preserveAspectRatio="xMidYMid meet"
+              <div className="bg-gray-900 rounded-xl border border-gray-800 p-4 space-y-3">
+                {/* Heatmap / Replay sekme seçici */}
+                <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
+                  <button
+                    onClick={() => setViewTab("heatmap")}
+                    className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                      viewTab === "heatmap"
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-gray-400 hover:text-gray-300"
+                    }`}
                   >
-                    {(currentResult.fixations as Array<{ x: number; y: number; duration: number }>).map(
-                      (f, fi) => (
-                        <circle
-                          key={fi}
-                          cx={f.x}
-                          cy={f.y}
-                          r={Math.max(8, Math.min(30, f.duration / 20))}
-                          fill="rgba(59, 130, 246, 0.4)"
-                          stroke="rgba(59, 130, 246, 0.8)"
-                          strokeWidth="2"
-                        />
-                      )
-                    )}
-                  </svg>
+                    Heatmap
+                  </button>
+                  <button
+                    onClick={() => setViewTab("replay")}
+                    className={`flex-1 px-3 py-1.5 rounded-md text-sm font-medium transition ${
+                      viewTab === "replay"
+                        ? "bg-blue-600 text-white shadow"
+                        : "text-gray-400 hover:text-gray-300"
+                    }`}
+                  >
+                    Gaze Replay
+                  </button>
                 </div>
-                <p className="text-gray-500 text-xs mt-2">
+
+                {viewTab === "heatmap" && (
+                  <div className="relative">
+                    <img
+                      src={currentResult.image_url}
+                      alt={`Foto ${selectedImage + 1}`}
+                      className="w-full rounded-lg"
+                    />
+                    {/* Heatmap overlay — gaze verilerinden client-side render */}
+                    <canvas
+                      ref={heatmapCanvasRef}
+                      className="absolute inset-0 w-full h-full rounded-lg object-contain"
+                      style={{ opacity: 0.6 }}
+                    />
+                    {/* Fixation points */}
+                    <svg
+                      className="absolute inset-0 w-full h-full"
+                      viewBox={`0 0 ${currentResult.image_width} ${currentResult.image_height}`}
+                      preserveAspectRatio="xMidYMid meet"
+                    >
+                      {(currentResult.fixations as Array<{ x: number; y: number; duration: number }>).map(
+                        (f, fi) => (
+                          <circle
+                            key={fi}
+                            cx={f.x}
+                            cy={f.y}
+                            r={Math.max(8, Math.min(30, f.duration / 20))}
+                            fill="rgba(59, 130, 246, 0.4)"
+                            stroke="rgba(59, 130, 246, 0.8)"
+                            strokeWidth="2"
+                          />
+                        )
+                      )}
+                    </svg>
+                  </div>
+                )}
+
+                {viewTab === "replay" && (
+                  <GazeReplay
+                    gazePoints={(currentResult.gaze_points ?? []) as GazePoint[]}
+                    fixations={(currentResult.fixations ?? []) as Fixation[]}
+                    width={currentResult.image_width}
+                    height={currentResult.image_height}
+                    imageUrl={currentResult.image_url}
+                  />
+                )}
+
+                <p className="text-gray-500 text-xs">
                   {currentResult.image_width}x{currentResult.image_height} px
                 </p>
               </div>
