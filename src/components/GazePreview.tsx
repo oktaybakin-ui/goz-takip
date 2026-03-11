@@ -101,7 +101,7 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
     if (activeTarget >= PREVIEW_TARGETS.length - 1) {
       autoConfirmRef.current = setTimeout(() => {
         onConfirm(computeAffinePointsRef.current());
-      }, 3000);
+      }, 1500);
     }
     return () => {
       if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
@@ -212,15 +212,10 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
 
         {allDone && (
           <div className="flex flex-col gap-2 mt-2">
-            <button
-              onClick={() => {
-                if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
-                onConfirm(computeAffinePoints());
-              }}
-              className="w-full px-6 py-3.5 bg-green-600 text-white rounded-xl font-bold hover:bg-green-500 transition shadow-lg text-base"
-            >
-              Analize Basla
-            </button>
+            <div className="flex items-center justify-center gap-2 py-2">
+              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+              <p className="text-green-400 text-sm font-medium">Analize otomatik geçiliyor...</p>
+            </div>
             <button
               onClick={() => {
                 if (autoConfirmRef.current) clearTimeout(autoConfirmRef.current);
@@ -230,7 +225,6 @@ export default function GazePreview({ model, faceTracker, onConfirm, onRetry }: 
             >
               Tekrar Kalibre Et
             </button>
-            <p className="text-gray-600 text-xs">3 saniye icinde otomatik devam edilecek...</p>
           </div>
         )}
 
