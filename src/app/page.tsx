@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import dynamic from "next/dynamic";
 import RegistrationForm from "@/components/RegistrationForm";
-import TestComplete from "@/components/TestComplete";
 import { useLang } from "@/contexts/LangContext";
 
 import type { ResultPerImage } from "@/types/results";
@@ -20,7 +19,7 @@ const EyeTracker = dynamic(() => import("@/components/EyeTracker"), {
   ),
 });
 
-type AppStep = "registration" | "loading_images" | "tracking" | "saving" | "complete";
+type AppStep = "registration" | "loading_images" | "tracking";
 
 interface TestImage {
   id: string;
@@ -61,11 +60,12 @@ export default function HomePage() {
     [t]
   );
 
+  const [dataSaved, setDataSaved] = useState(false);
+
   const handleTrackingComplete = useCallback(
     async (results: ResultPerImage[], calibrationErrorPx: number) => {
       if (!sessionId) return;
-      setStep("saving");
-
+      // Sonuçları arka planda kaydet — kullanıcı kendi sonuçlarını görmeye devam eder
       try {
         const payload = {
           results: results.map((r, i) => ({
@@ -89,21 +89,21 @@ export default function HomePage() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload),
         });
+        setDataSaved(true);
       } catch {
-        // Still mark complete even if save fails - data was already captured
+        // Kaydetme başarısız olsa bile sonuçlar ekranda gösterilmeye devam eder
+        setDataSaved(true);
       }
-
-      setStep("complete");
     },
     [sessionId, testImages]
   );
 
   // sendBeacon for abandoned sessions
   useEffect(() => {
-    if (!sessionId || step === "complete") return;
+    if (!sessionId) return;
 
     const handleBeforeUnload = () => {
-      if (step === "tracking" || step === "saving") {
+      if (step === "tracking" && !dataSaved) {
         navigator.sendBeacon(
           `/api/sessions/${sessionId}/status`,
           new Blob(
@@ -118,17 +118,13 @@ export default function HomePage() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [sessionId, step]);
 
-  if (step === "complete") {
-    return <TestComplete />;
-  }
-
-  if (step === "loading_images" || step === "saving") {
+  if (step === "loading_images") {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-950">
         <div className="flex flex-col items-center">
           <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mb-4" />
           <p className="text-gray-400">
-            {step === "saving" ? "Sonuçlar kaydediliyor..." : t.loading}
+            {t.loading}
           </p>
         </div>
       </div>

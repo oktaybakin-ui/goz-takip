@@ -358,11 +358,14 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         blinkEvents: blinkEventsByImageRef.current[i] ?? [],
         blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
-      if (onTrackingComplete) {
-        pendingCompleteRef.current = { results, calibrationError };
-      }
+      // Sonuçları otomatik kaydet (arka planda) + kullanıcıya göster
+      pendingCompleteRef.current = { results, calibrationError };
       setResultsPerImage(results);
       setPhase("results");
+      // Otomatik kaydetme — kullanıcı "Testi Tamamla" butonuna basmak zorunda değil
+      if (onTrackingComplete) {
+        onTrackingComplete(results, calibrationError);
+      }
       return;
     }
 
@@ -894,8 +897,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
       }
     }
 
-    // Tek görsel modu: onTrackingComplete desteği
-    if (!isMultiImage && onTrackingComplete) {
+    // Tek görsel modu: onTrackingComplete desteği — otomatik kaydet
+    if (!isMultiImage) {
       const singleResult: ResultPerImage = {
         imageUrl: currentImageUrl,
         gazePoints: [...gazePointsRef.current],
@@ -907,6 +910,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         blinkMetrics: blinkDetectorRef.current.getMetrics(),
       };
       pendingCompleteRef.current = { results: [singleResult], calibrationError };
+      if (onTrackingComplete) {
+        onTrackingComplete([singleResult], calibrationError);
+      }
     }
 
     setPhase("results");
@@ -1472,15 +1478,12 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         />
       )}
 
-      {/* Sonuç ekranında "Testi Tamamla" butonu */}
-      {phase === "results" && onTrackingComplete && (
+      {/* Sonuç ekranında bilgi — veriler otomatik kaydedildi */}
+      {phase === "results" && (
         <div className="w-full max-w-7xl mx-auto px-4 pb-8">
-          <button
-            onClick={handleCompleteTest}
-            className="w-full max-w-sm mx-auto block px-8 py-4 bg-green-600 text-white rounded-xl text-lg font-semibold hover:bg-green-500 transition shadow-lg shadow-green-600/20"
-          >
-            Testi Tamamla
-          </button>
+          <div className="max-w-sm mx-auto text-center py-3 px-4 bg-green-900/30 border border-green-500/20 rounded-xl">
+            <p className="text-green-400 text-sm font-medium">✓ Veriler otomatik olarak kaydedildi</p>
+          </div>
         </div>
       )}
 

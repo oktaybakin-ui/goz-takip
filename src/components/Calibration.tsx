@@ -50,7 +50,7 @@ export default function Calibration({
   const phaseRef = useRef<string>("idle");
   const hasAutoTransitionedRef = useRef(false);
   const [storedInfo, setStoredInfo] = useState<ReturnType<typeof loadCalibration>>(null);
-  const [gridSize, setGridSize] = useState<GridSize>("4x4");
+  const [gridSize, setGridSize] = useState<GridSize>(isMobileDevice() ? "4x4" : "5x5");
   const { t } = useLang();
 
   // Cleanup: unmount olduğunda tüm zamanlayıcı ve frame'leri temizle
@@ -427,31 +427,12 @@ export default function Calibration({
             </div>
           </div>
 
-          {/* Grid boyutu seçici — sadece masaüstü */}
-          {!isMobileDevice() && (
-            <div className="flex gap-2 mb-6">
-              <button
-                onClick={() => handleGridSizeChange("4x4")}
-                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition border ${
-                  gridSize === "4x4"
-                    ? "bg-blue-600/20 border-blue-500 text-blue-400"
-                    : "bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500"
-                }`}
-              >
-                Standart (16 nokta)
-              </button>
-              <button
-                onClick={() => handleGridSizeChange("5x5")}
-                className={`flex-1 px-3 py-2.5 rounded-lg text-sm font-medium transition border ${
-                  gridSize === "5x5"
-                    ? "bg-blue-600/20 border-blue-500 text-blue-400"
-                    : "bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-500"
-                }`}
-              >
-                Yüksek Doğruluk (25 nokta)
-              </button>
-            </div>
-          )}
+          {/* Kalibrasyon modu bilgisi */}
+          <div className="mb-6 px-4 py-2.5 bg-blue-600/10 border border-blue-500/20 rounded-lg">
+            <p className="text-blue-400 text-sm text-center">
+              {isMobileDevice() ? "📱 Standart kalibrasyon (16 nokta)" : "🎯 Yüksek doğruluk modu (25 nokta)"}
+            </p>
+          </div>
 
           <div className="flex flex-col gap-3">
             <button
