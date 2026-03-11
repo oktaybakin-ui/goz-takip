@@ -4,7 +4,7 @@
  */
 
 /** Her fotoğraf için takip süresi (ms). */
-export const IMAGE_DURATION_MS = 10_000;
+export const IMAGE_DURATION_MS = 5_000;
 
 /** Yüz kırpma (crop) işlemi timeout (ms). */
 export const CROP_TIMEOUT_MS = 20_000;
