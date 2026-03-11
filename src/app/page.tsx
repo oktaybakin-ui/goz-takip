@@ -118,6 +118,23 @@ export default function HomePage() {
     return () => window.removeEventListener("beforeunload", handleBeforeUnload);
   }, [sessionId, step]);
 
+  const handleRecordingReady = useCallback(
+    async (blob: Blob) => {
+      if (!sessionId) return;
+      try {
+        const formData = new FormData();
+        formData.append("video", blob, "recording.webm");
+        await fetch(`/api/sessions/${sessionId}/recording`, {
+          method: "POST",
+          body: formData,
+        });
+      } catch {
+        // Kayıt yükleme başarısız olsa bile kullanıcıyı etkilemez
+      }
+    },
+    [sessionId]
+  );
+
   if (step === "loading_images") {
     return (
       <div className="flex items-center justify-center h-screen bg-gray-950">
@@ -141,6 +158,7 @@ export default function HomePage() {
         })}
         sessionId={sessionId || undefined}
         onTrackingComplete={handleTrackingComplete}
+        onRecordingReady={handleRecordingReady}
       />
     );
   }

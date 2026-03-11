@@ -401,8 +401,8 @@ export class GazeModel {
     // minCutoff: düşük = güçlü smoothing (fixation), yüksek = hızlı takip (saccade)
     // beta: hız artınca cutoff ne kadar hızlı yükselsin
     // beta=0.002: fixation moduyla tutarlı (eski 0.015 ilk frame'lerde aşırı geçişli idi)
-    this.filterX = new OneEuroFilter(1.0, 0.002, 1.0);
-    this.filterY = new OneEuroFilter(1.0, 0.002, 1.0);
+    this.filterX = new OneEuroFilter(1.0, 0.007, 1.0);
+    this.filterY = new OneEuroFilter(1.0, 0.007, 1.0);
   }
 
   // Eye features'dan input vektörü oluştur
@@ -1004,8 +1004,41 @@ export class GazeModel {
     }
 
     // One Euro Filter uygula — pipeline'daki TEK smoothing katmanı
-    const finalX = this.filterX.filter(correctedX, now);
-    const finalY = this.filterY.filter(correctedY, now);
+    let finalX = this.filterX.filter(correctedX, now);
+    let finalY = this.filterY.filter(correctedY, now);
+
+    // Boundary spring: köşelerde yapışmayı kırmak için kenar bandında hafif içeri çekme
+    // Saccade sırasında devre dışı — doğal bakış hareketini bozmaz
+    if (typeof window !== "undefined") {
+      const sw = window.innerWidth;
+      const sh = window.innerHeight;
+      const edgeBandX = sw * 0.05; // ~96px
+      const edgeBandY = sh * 0.05;
+      const maxVel = Math.max(velocityX, velocityY);
+      // Saccade değilse (< 200px/s) spring uygula
+      if (maxVel < 200) {
+        // Sol kenar
+        if (finalX < edgeBandX) {
+          const t = 1 - finalX / edgeBandX; // 0 (iç) → 1 (kenar)
+          finalX += t * edgeBandX * 0.25; // max %25 içeri çek
+        }
+        // Sağ kenar
+        if (finalX > sw - edgeBandX) {
+          const t = 1 - (sw - finalX) / edgeBandX;
+          finalX -= t * edgeBandX * 0.25;
+        }
+        // Üst kenar
+        if (finalY < edgeBandY) {
+          const t = 1 - finalY / edgeBandY;
+          finalY += t * edgeBandY * 0.25;
+        }
+        // Alt kenar
+        if (finalY > sh - edgeBandY) {
+          const t = 1 - (sh - finalY) / edgeBandY;
+          finalY -= t * edgeBandY * 0.25;
+        }
+      }
+    }
 
     // Geçmişe ekle
     this.predictionHistory.push({ x: finalX, y: finalY, t: now });

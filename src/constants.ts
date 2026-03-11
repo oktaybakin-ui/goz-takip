@@ -4,7 +4,7 @@
  */
 
 /** Her fotoğraf için takip süresi (ms). */
-export const IMAGE_DURATION_MS = 7_000;
+export const IMAGE_DURATION_MS = 10_000;
 
 /** Yüz kırpma (crop) işlemi timeout (ms). */
 export const CROP_TIMEOUT_MS = 20_000;
@@ -29,5 +29,5 @@ export const CONFIDENCE_MIN_FIXATION = 0.15;
 export const CONFIDENCE_MIN_CALIBRATION_SAMPLE = 0.10;
 
 // ─── Spatial Weighting ──────────────────────────────────────────────
-/** Kenar noktası ağırlığı — düşürüldü: 0.35→0.20 (edge overfitting azaltma). */
-export const SPATIAL_EDGE_WEIGHT = 0.20;
+/** Kenar noktası ağırlığı — artırıldı: köşe kalitesini iyileştirmek için. */
+export const SPATIAL_EDGE_WEIGHT = 0.35;

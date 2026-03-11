@@ -60,7 +60,7 @@ export function generateCalibrationPoints(
   gridSize?: GridSize
 ): CalibrationPoint[] {
   const mobile = isMobileDevice();
-  const effectivePadding = padding ?? (mobile ? 30 : 50);
+  const effectivePadding = padding ?? (mobile ? 20 : 30);
   padding = effectivePadding;
   const points: CalibrationPoint[] = [];
   let id = 0;

@@ -184,7 +184,23 @@ export class MultiModelEnsemble {
     variance /= totalWeight;
 
     // Higher variance = lower confidence
-    const ensembleConfidence = minConfidence * Math.exp(-variance / 1000);
+    let ensembleConfidence = minConfidence * Math.exp(-variance / 1000);
+
+    // Boundary penalty: ekran dışı tahminlerde confidence düşür
+    if (typeof window !== "undefined") {
+      const sw = window.innerWidth;
+      const sh = window.innerHeight;
+      const margin = 0.1; // %10 tolerans
+      const overX = avgX < -sw * margin ? Math.abs(avgX + sw * margin) :
+                    avgX > sw * (1 + margin) ? avgX - sw * (1 + margin) : 0;
+      const overY = avgY < -sh * margin ? Math.abs(avgY + sh * margin) :
+                    avgY > sh * (1 + margin) ? avgY - sh * (1 + margin) : 0;
+      if (overX > 0 || overY > 0) {
+        const overDist = Math.sqrt(overX ** 2 + overY ** 2);
+        const diag = Math.sqrt(sw ** 2 + sh ** 2);
+        ensembleConfidence *= Math.max(0.1, 1 - (overDist / diag) * 5);
+      }
+    }
 
     const result = {
       x: avgX,

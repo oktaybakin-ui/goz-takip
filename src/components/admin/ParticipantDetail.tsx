@@ -122,6 +122,19 @@ export default function ParticipantDetail({ sessionId }: ParticipantDetailProps)
             }
           />
         </div>
+
+        {/* Webcam Kaydı */}
+        {session.recording_url && (
+          <div className="mt-4">
+            <h3 className="text-white font-semibold mb-2 text-sm">Webcam Kaydı</h3>
+            <video
+              src={session.recording_url}
+              controls
+              className="w-full max-w-md rounded-lg border border-gray-700"
+              style={{ maxHeight: 300 }}
+            />
+          </div>
+        )}
       </div>
 
       {results.length === 0 ? (

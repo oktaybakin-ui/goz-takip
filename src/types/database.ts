@@ -16,6 +16,7 @@ export interface TestSessionRow {
   completed_at: string | null;
   image_count: number;
   user_agent: string | null;
+  recording_url: string | null;
 }
 
 export interface TestImageRow {

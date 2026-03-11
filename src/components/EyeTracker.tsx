@@ -34,6 +34,7 @@ interface EyeTrackerProps {
   imageUrls: string[];
   onReset?: () => void;
   onTrackingComplete?: (results: ResultPerImage[], calibrationErrorPx: number) => void;
+  onRecordingReady?: (blob: Blob) => void;
   sessionId?: string;
 }
 
@@ -56,7 +57,7 @@ function createFixationDetectorWithDims(_w: number, _h: number): FixationDetecto
   return new FixationDetector(0, 100, 0, 0, 2, "ivt", 0, 150, 8000, screenDiag);
 }
 
-export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, sessionId }: EyeTrackerProps) {
+export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onRecordingReady, sessionId }: EyeTrackerProps) {
   const [currentImageIndex, setCurrentImageIndex] = useState(0);
   const [phase, setPhase] = useState<AppPhase>("loading");
   const [error, setError] = useState<string | null>(null);
@@ -158,6 +159,10 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   const blinkMetricsByImageRef = useRef<(BlinkMetrics | null)[]>([]);
   const advancingRef = useRef(false);
   const pendingCompleteRef = useRef<{ results: ResultPerImage[]; calibrationError: number } | null>(null);
+  // Webcam kaydı için MediaRecorder
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const recordingBlobRef = useRef<Blob | null>(null);
   // İlk görselin display boyutunu kaydet — tüm görseller bu boyutta gösterilir
   const firstImageDimsRef = useRef<{ width: number; height: number } | null>(null);
 
@@ -389,6 +394,11 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         blinkEvents: blinkEventsByImageRef.current[i] ?? [],
         blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
+      // Webcam kaydını durdur
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+        mediaRecorderRef.current.stop();
+        logger.log("[EyeTracker] Webcam kaydı durduruldu");
+      }
       // Sonuçları otomatik kaydet (arka planda) + kullanıcıya göster
       pendingCompleteRef.current = { results, calibrationError };
       setResultsPerImage(results);
@@ -608,6 +618,34 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
     fixationsRef.current = [];
     setFixations([]);
     gazePointsRef.current = [];
+
+    // İlk görsel: webcam kaydını başlat
+    if (currentImageIndexRef.current === 0 && !mediaRecorderRef.current) {
+      try {
+        const stream = faceTrackerRef.current.getStream();
+        if (stream) {
+          recordedChunksRef.current = [];
+          recordingBlobRef.current = null;
+          const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
+            ? "video/webm;codecs=vp9" : "video/webm";
+          const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 1_500_000 });
+          recorder.ondataavailable = (e) => {
+            if (e.data.size > 0) recordedChunksRef.current.push(e.data);
+          };
+          recorder.onstop = () => {
+            const blob = new Blob(recordedChunksRef.current, { type: mimeType });
+            recordingBlobRef.current = blob;
+            mediaRecorderRef.current = null;
+            if (onRecordingReady) onRecordingReady(blob);
+          };
+          recorder.start(1000); // 1s chunks
+          mediaRecorderRef.current = recorder;
+          logger.log("[EyeTracker] Webcam kaydı başladı");
+        }
+      } catch (err) {
+        logger.warn("[EyeTracker] Webcam kaydı başlatılamadı:", err);
+      }
+    }
 
     fixationDetectorRef.current = createFixationDetectorWithDims(imageDimensions.width, imageDimensions.height);
     fixationDetectorRef.current.startTracking();
@@ -869,7 +907,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         confidence: screenPoint.confidence,
       };
 
-      const BOUNDARY_MARGIN = 20;
+      const BOUNDARY_MARGIN = 40;
       const edgeDistX = Math.min(point.x, dims.width - point.x);
       const edgeDistY = Math.min(point.y, dims.height - point.y);
       const edgeDist = Math.min(edgeDistX, edgeDistY);
