@@ -550,9 +550,12 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
   }, [phase]);
 
   // ResizeObserver ile responsive canvas boyutlandırma
+  // Tracking sırasında devre dışı — titreme (layout oscillation) önlenir
   useEffect(() => {
     if (!imageContainerRef.current || !imageRef.current || phase !== "tracking") return;
-    const observer = new ResizeObserver(() => {
+    // Tracking sırasında ResizeObserver kullanma — boyut sabitlendikten sonra değişmemeli
+    // Sadece pencere boyutu DEĞİŞTİĞİNDE güncelle (resize event ile)
+    const handleResize = () => {
       const img = imageRef.current;
       if (!img) return;
       const maxW = window.innerWidth * 0.95;
@@ -562,15 +565,18 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
         width: Math.round(img.naturalWidth * scale),
         height: Math.round(img.naturalHeight * scale),
       };
-      // Çoklu fotoğrafta sabit boyut — firstImageDims'i güncelle
-      if (isMultiImage && firstImageDimsRef.current) {
-        firstImageDimsRef.current = newDims;
+      // Sadece gerçekten değiştiyse güncelle (titreme önleme)
+      const cur = imageDimsRef.current;
+      if (Math.abs(cur.width - newDims.width) > 2 || Math.abs(cur.height - newDims.height) > 2) {
+        if (isMultiImage && firstImageDimsRef.current) {
+          firstImageDimsRef.current = newDims;
+        }
+        setImageDimensions(newDims);
       }
-      setImageDimensions(newDims);
-    });
-    observer.observe(imageContainerRef.current);
-    return () => observer.disconnect();
-  }, [phase, imageLoaded]);
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [phase, imageLoaded, isMultiImage]);
 
   // Görüntünün ekrandaki gerçek pozisyonunu al (border hariç içerik alanı)
   const getImageRect = useCallback((): DOMRect | null => {
@@ -1410,6 +1416,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, ses
             style={{
               width: imageDimensions.width,
               height: imageDimensions.height,
+              willChange: isTracking ? "auto" : undefined,
+              contain: isTracking ? "layout size" : undefined,
             }}
             onClick={(e) => {
               if (isTracking && autoRecalRef.current) {
