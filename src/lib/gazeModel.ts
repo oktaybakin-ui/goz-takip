@@ -1038,12 +1038,12 @@ export class GazeModel {
       const sh = window.innerHeight;
       const edgeBandX = sw * 0.08;
       const edgeBandY = sh * 0.08;
-      // Alt kenar bandı daha geniş — aşağı drift'i önlemek için
-      const bottomEdgeBand = sh * 0.12;
+      // Alt kenar bandı biraz daha geniş — aşağı drift'i önlemek için (ama abartılı değil)
+      const bottomEdgeBand = sh * 0.10;
       const maxVel = Math.max(velocityX, velocityY);
       const springStrength = 0.4;
-      // Alt kenar spring daha güçlü (aşağı çekilmeye karşı direnç)
-      const bottomSpringStrength = 0.55;
+      // Alt kenar spring biraz daha güçlü (ama yukarı bias yaratmayacak kadar hafif)
+      const bottomSpringStrength = 0.48;
       // Saccade değilse (< 250px/s) spring uygula
       if (maxVel < 250) {
         // Sol kenar
@@ -1079,14 +1079,15 @@ export class GazeModel {
 
     // Vertical drift kompanzasyonu: son N frame'de sistematik aşağı kayma varsa düzelt
     // Pitch arttıkça (aşağı bakış) iris Y sinyali bozulur → model alt yarıda hata yapar
-    if (typeof window !== "undefined" && this.predictionHistory.length >= 5) {
+    // DİKKAT: Eşik çok agresif olursa yukarı bias yaratır — muhafazakâr tut
+    if (typeof window !== "undefined" && this.predictionHistory.length >= 7) {
       const sh = window.innerHeight;
       const screenCenter = sh * 0.5;
-      // Son 5 frame'in ortalama Y pozisyonu
-      const recentY = this.predictionHistory.slice(-5).reduce((s, p) => s + p.y, 0) / 5;
-      // Ekranın alt %30'unda sürekli takılıyorsa hafif yukarı çek
-      if (recentY > sh * 0.70 && finalY > screenCenter) {
-        const pullStrength = Math.min(0.06, (recentY - sh * 0.70) / sh * 0.15);
+      // Son 7 frame'in ortalama Y pozisyonu (5→7: daha güvenilir trend tespiti)
+      const recentY = this.predictionHistory.slice(-7).reduce((s, p) => s + p.y, 0) / 7;
+      // Ekranın alt %20'sinde sürekli takılıyorsa hafif yukarı çek (70%→80%: daha muhafazakâr)
+      if (recentY > sh * 0.80 && finalY > sh * 0.65) {
+        const pullStrength = Math.min(0.04, (recentY - sh * 0.80) / sh * 0.12);
         finalY -= (finalY - screenCenter) * pullStrength;
       }
     }
