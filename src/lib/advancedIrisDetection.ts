@@ -36,7 +36,7 @@ export class AdvancedIrisDetector {
     ['left', []],
     ['right', []]
   ]);
-  private readonly HISTORY_SIZE = 3; // 12→3: sinyal koruması için minimal
+  private readonly HISTORY_SIZE = 5; // 3→5: daha iyi jitter bastırma, sinyal kaybı olmadan
 
   private useEllipseFitting: boolean = true;
 

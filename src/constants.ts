@@ -22,7 +22,7 @@ export const EAR_BLINK_THRESHOLD_MOBILE = 0.11;
 /** Tracking sırasında minimum confidence (desktop). */
 export const CONFIDENCE_MIN_TRACKING = 0.15;
 /** Tracking sırasında minimum confidence (mobil — artırıldı, gürültülü veri azaltılır). */
-export const CONFIDENCE_MIN_TRACKING_MOBILE = 0.10;
+export const CONFIDENCE_MIN_TRACKING_MOBILE = 0.12;
 /** Fixation detector'da noktayı kabul etmek için minimum confidence. */
 export const CONFIDENCE_MIN_FIXATION = 0.15;
 /** Kalibrasyon sırasında sample toplama minimum confidence. */
@@ -30,4 +30,4 @@ export const CONFIDENCE_MIN_CALIBRATION_SAMPLE = 0.10;
 
 // ─── Spatial Weighting ──────────────────────────────────────────────
 /** Kenar noktası ağırlığı — artırıldı: köşe kalitesini iyileştirmek için. */
-export const SPATIAL_EDGE_WEIGHT = 0.35;
+export const SPATIAL_EDGE_WEIGHT = 0.40;

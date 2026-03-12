@@ -285,14 +285,14 @@ export class OneEuroFilter {
     let beta: number;
     if (velocity < velFixThreshold) {
       // Fixation: güçlü smoothing — confidence düşükse daha da agresif
-      cutoff = confidence < 0.4 ? 0.3 : 0.6;
-      beta = confidence < 0.4 ? 0.001 : 0.002;
+      cutoff = confidence < 0.4 ? 0.2 : 0.4;   // Düşürüldü: daha stabil fixation
+      beta = confidence < 0.4 ? 0.0005 : 0.001; // Düşürüldü: fixation'da daha az sıçrama
     } else if (velocity < velSaccThreshold) {
       // Smooth pursuit: orta smoothing, orta beta
       const range = velSaccThreshold - velFixThreshold;
       const t = (velocity - velFixThreshold) / range; // 0→1 arası
-      cutoff = 0.6 + t * 4.4; // 0.6→5.0
-      beta = 0.002 + t * 0.023; // 0.002→0.025
+      cutoff = 0.4 + t * 4.6; // 0.4→5.0
+      beta = 0.001 + t * 0.024; // 0.001→0.025
     } else {
       // Saccade: minimal smoothing, yüksek beta (hızlı takip)
       const t = Math.min((velocity - velSaccThreshold) / 700, 1.0);
@@ -897,15 +897,13 @@ export class GazeModel {
 
     const now = performance.now();
 
-    // Hız hesapla (adaptive smoothing için) — X ve Y ayrı
+    // Hız hesapla — multi-frame median (tekil gürültülü frame'lere dayanıklı)
     // Sorun #16: Zaman boşluklarını (blink, tracking loss) kontrol et
     let velocityX = 0;
     let velocityY = 0;
     if (this.predictionHistory.length > 0) {
       const last = this.predictionHistory[this.predictionHistory.length - 1];
-      const dx = raw.x - last.x;
-      const dy = raw.y - last.y;
-      const dt = (now - last.t) / 1000; // saniye
+      const dt = (now - last.t) / 1000;
       // 150ms'den uzun boşluk → blink/kayıp, velocity'yi sıfırla ve filtreyi resetle
       if (dt > 0.15) {
         velocityX = 0;
@@ -913,8 +911,32 @@ export class GazeModel {
         this.filterX.reset();
         this.filterY.reset();
       } else if (dt > 0) {
-        velocityX = Math.abs(dx) / dt;
-        velocityY = Math.abs(dy) / dt;
+        // Son 3 frame'in velocity'lerinin medianını al (daha robust)
+        const recentVelsX: number[] = [];
+        const recentVelsY: number[] = [];
+        const hist = this.predictionHistory;
+        for (let i = hist.length - 1; i >= Math.max(0, hist.length - 3); i--) {
+          const prev = i > 0 ? hist[i - 1] : null;
+          const cur = i === hist.length - 1 ? { x: raw.x, y: raw.y, t: now } : hist[i + 1];
+          const ref = i === hist.length - 1 ? hist[i] : hist[i];
+          if (prev) {
+            const dti = (cur.t - ref.t) / 1000;
+            if (dti > 0 && dti < 0.15) {
+              recentVelsX.push(Math.abs(cur.x - ref.x) / dti);
+              recentVelsY.push(Math.abs(cur.y - ref.y) / dti);
+            }
+          }
+        }
+        // Tek frame varsa direkt hesapla
+        if (recentVelsX.length === 0) {
+          velocityX = Math.abs(raw.x - last.x) / dt;
+          velocityY = Math.abs(raw.y - last.y) / dt;
+        } else {
+          recentVelsX.sort((a, b) => a - b);
+          recentVelsY.sort((a, b) => a - b);
+          velocityX = recentVelsX[Math.floor(recentVelsX.length / 2)];
+          velocityY = recentVelsY[Math.floor(recentVelsY.length / 2)];
+        }
       }
     }
 
@@ -980,7 +1002,7 @@ export class GazeModel {
         ? Math.max(window.innerWidth, window.innerHeight)
         : 1920;
       // Adaptif eşik: ortalama hızla orantılı, saccade'lara dokunmadan gürültüyü azalt
-      const baseThreshold = screenMax * (isMobile ? 0.40 : 0.25);
+      const baseThreshold = screenMax * (isMobile ? 0.30 : 0.20);
       const velocityBonus = Math.min(avgVelocity * 180, screenMax * 0.25);
       const jumpThreshold = baseThreshold + velocityBonus;
 
@@ -1007,35 +1029,42 @@ export class GazeModel {
     let finalX = this.filterX.filter(correctedX, now);
     let finalY = this.filterY.filter(correctedY, now);
 
-    // Boundary spring: köşelerde yapışmayı kırmak için kenar bandında hafif içeri çekme
+    // Boundary spring: köşelerde yapışmayı kırmak için kenar bandında içeri çekme
     // Saccade sırasında devre dışı — doğal bakış hareketini bozmaz
+    // Negatif koordinatları da yakalar (ekran dışına taşma)
     if (typeof window !== "undefined") {
       const sw = window.innerWidth;
       const sh = window.innerHeight;
-      const edgeBandX = sw * 0.05; // ~96px
-      const edgeBandY = sh * 0.05;
+      const edgeBandX = sw * 0.08; // %8 kenar bandı (genişletildi)
+      const edgeBandY = sh * 0.08;
       const maxVel = Math.max(velocityX, velocityY);
-      // Saccade değilse (< 200px/s) spring uygula
-      if (maxVel < 200) {
-        // Sol kenar
-        if (finalX < edgeBandX) {
-          const t = 1 - finalX / edgeBandX; // 0 (iç) → 1 (kenar)
-          finalX += t * edgeBandX * 0.25; // max %25 içeri çek
+      const springStrength = 0.4; // %40 içeri çekme kuvveti (güçlendirildi)
+      // Saccade değilse (< 250px/s) spring uygula
+      if (maxVel < 250) {
+        // Negatif koordinatlar: ekran dışı → sıfıra çek
+        if (finalX < 0) {
+          finalX *= 0.3; // Ekran dışını %70 azalt
+        } else if (finalX < edgeBandX) {
+          const t = 1 - finalX / edgeBandX;
+          finalX += t * edgeBandX * springStrength;
         }
-        // Sağ kenar
-        if (finalX > sw - edgeBandX) {
+        if (finalX > sw) {
+          finalX = sw + (finalX - sw) * 0.3;
+        } else if (finalX > sw - edgeBandX) {
           const t = 1 - (sw - finalX) / edgeBandX;
-          finalX -= t * edgeBandX * 0.25;
+          finalX -= t * edgeBandX * springStrength;
         }
-        // Üst kenar
-        if (finalY < edgeBandY) {
+        if (finalY < 0) {
+          finalY *= 0.3;
+        } else if (finalY < edgeBandY) {
           const t = 1 - finalY / edgeBandY;
-          finalY += t * edgeBandY * 0.25;
+          finalY += t * edgeBandY * springStrength;
         }
-        // Alt kenar
-        if (finalY > sh - edgeBandY) {
+        if (finalY > sh) {
+          finalY = sh + (finalY - sh) * 0.3;
+        } else if (finalY > sh - edgeBandY) {
           const t = 1 - (sh - finalY) / edgeBandY;
-          finalY -= t * edgeBandY * 0.25;
+          finalY -= t * edgeBandY * springStrength;
         }
       }
     }

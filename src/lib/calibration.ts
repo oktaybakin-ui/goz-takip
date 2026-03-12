@@ -96,10 +96,10 @@ export function generateCalibrationPoints(
 /** Grid boyutuna göre adaptif minimum örnek sayısı */
 export function getMinSamplesPerPoint(gridSize: GridSize): number {
   switch (gridSize) {
-    case "5x5": return 30;
-    case "4x4": return 35;  // ~1.1s, iris stabilize olması için yeterli süre
-    case "3x3": return 40;  // Az nokta → her noktada daha çok örnek gerekli
-    default: return 25;
+    case "5x5": return 35;
+    case "4x4": return 40;  // Artırıldı: daha iyi model doğruluğu
+    case "3x3": return 45;  // Az nokta → her noktada daha çok örnek gerekli
+    default: return 30;
   }
 }
 
@@ -212,9 +212,9 @@ export class CalibrationManager {
   private detectedFPS: number = 30;
   private recentIrisBuffer: { x: number; y: number }[] = [];
   private readonly IRIS_BUFFER_SIZE = 10; // 5→10: daha uzun pencere, medium-term drift yakalama
-  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.045 : 0.035;  // Sıkılaştırıldı
+  private readonly IRIS_STD_MAX = isMobileDevice() ? 0.040 : 0.030;  // Daha sıkı: düşük kalite veriyi reddet
   private prevPoseForCalib: { yaw: number; pitch: number } | null = null;
-  private baseSamplesPerPoint = isMobileDevice() ? 28 : 30;          // Temel örnek sayısı (adaptif olarak artırılır)
+  private baseSamplesPerPoint = isMobileDevice() ? 35 : 40;          // Artırıldı: daha fazla veri → daha iyi model
   private gridSize: GridSize | undefined = undefined;
   private readonly MIN_CONFIDENCE_CALIBRATION = isMobileDevice() ? 0.15 : 0.35; // Sıkılaştırıldı: düşük kalite veri reddedilir
   private readonly RETRY_QUALITY_THRESHOLD = 3; // Kalite < 3 ise retry
@@ -285,11 +285,11 @@ export class CalibrationManager {
     const isEdgeX = point.relX < 0.2 || point.relX > 0.8;
     const isEdgeY = point.relY < 0.2 || point.relY > 0.8;
     if (isEdgeX && isEdgeY) {
-      // Köşe noktası — en zor bölge
-      return Math.round(this.baseSamplesPerPoint * 1.5);
+      // Köşe noktası — en zor bölge, en çok veri gerekli
+      return Math.round(this.baseSamplesPerPoint * 1.7);
     } else if (isEdgeX || isEdgeY) {
       // Kenar noktası
-      return Math.round(this.baseSamplesPerPoint * 1.25);
+      return Math.round(this.baseSamplesPerPoint * 1.4);
     }
     return this.baseSamplesPerPoint;
   }

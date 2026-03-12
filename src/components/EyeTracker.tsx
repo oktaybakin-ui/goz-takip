@@ -769,8 +769,9 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
             // Ensemble raw corrected prediction döndürüyor — burada TEK One Euro Filter uygula
             const now = performance.now();
 
-            // Velocity hesapla (adaptive filter parametreleri için)
-            let velocity = 0;
+            // Velocity hesapla — X/Y ayrı, multi-frame median ile robust
+            let velocityX = 0;
+            let velocityY = 0;
             const hist = ensemblePredHistory.current;
             if (hist.length > 0) {
               const last = hist[hist.length - 1];
@@ -780,12 +781,34 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
                 ensembleFilterX.current.reset();
                 ensembleFilterY.current.reset();
               } else if (dt > 0) {
-                velocity = Math.sqrt((rawEnsemble.x - last.x) ** 2 + (rawEnsemble.y - last.y) ** 2) / dt;
+                // Son 3 frame velocity median
+                const vxArr: number[] = [];
+                const vyArr: number[] = [];
+                for (let i = hist.length - 1; i >= Math.max(0, hist.length - 3); i--) {
+                  const cur = i === hist.length - 1 ? rawEnsemble : hist[i + 1];
+                  const ref = hist[i];
+                  const dti = ((i === hist.length - 1 ? now : hist[i + 1].t) - ref.t) / 1000;
+                  if (dti > 0 && dti < 0.15) {
+                    vxArr.push(Math.abs(cur.x - ref.x) / dti);
+                    vyArr.push(Math.abs(cur.y - ref.y) / dti);
+                  }
+                }
+                if (vxArr.length > 0) {
+                  vxArr.sort((a, b) => a - b);
+                  vyArr.sort((a, b) => a - b);
+                  velocityX = vxArr[Math.floor(vxArr.length / 2)];
+                  velocityY = vyArr[Math.floor(vyArr.length / 2)];
+                } else {
+                  velocityX = Math.abs(rawEnsemble.x - last.x) / dt;
+                  velocityY = Math.abs(rawEnsemble.y - last.y) / dt;
+                }
               }
             }
 
-            ensembleFilterX.current.setDynamicParams(velocity, features.confidence);
-            ensembleFilterY.current.setDynamicParams(velocity, features.confidence);
+            // X ve Y ayrı: Y ekseni göz kapağı gürültüsünden etkilenir → %30 daha fazla smoothing
+            const velTotal = Math.sqrt(velocityX ** 2 + velocityY ** 2);
+            ensembleFilterX.current.setDynamicParams(velTotal, features.confidence, 'x');
+            ensembleFilterY.current.setDynamicParams(velTotal, features.confidence, 'y');
 
             const filteredX = ensembleFilterX.current.filter(rawEnsemble.x, now);
             const filteredY = ensembleFilterY.current.filter(rawEnsemble.y, now);

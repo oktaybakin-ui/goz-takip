@@ -152,7 +152,19 @@ export class MultiModelEnsemble {
 
     if (predictions.length === 0) return null;
 
-    // Weighted average of RAW corrected predictions
+    // Outlier rejection: median-based — aykırı tahminlerin etkisini azalt
+    const xs = predictions.map(p => p.pred!.x);
+    const ys = predictions.map(p => p.pred!.y);
+    const medX = xs.length >= 3 ? xs.sort((a, b) => a - b)[1] : xs.reduce((a, b) => a + b, 0) / xs.length;
+    const medY = ys.length >= 3 ? ys.sort((a, b) => a - b)[1] : ys.reduce((a, b) => a + b, 0) / ys.length;
+
+    // Her model için median'dan mesafe hesapla, uzak olanın ağırlığını düşür
+    const screenDiag = typeof window !== "undefined"
+      ? Math.sqrt(window.innerWidth ** 2 + window.innerHeight ** 2)
+      : 2200;
+    const outlierThreshold = screenDiag * 0.15; // ekran çaprazının %15'inden uzak → ağırlık düşür
+
+    // Weighted average with outlier-dampened weights
     let totalWeight = 0;
     let weightedX = 0;
     let weightedY = 0;
@@ -160,9 +172,15 @@ export class MultiModelEnsemble {
 
     predictions.forEach(({ pred, weight }) => {
       if (pred) {
-        weightedX += pred.x * weight;
-        weightedY += pred.y * weight;
-        totalWeight += weight;
+        const distFromMedian = Math.sqrt((pred.x - medX) ** 2 + (pred.y - medY) ** 2);
+        // Aykırı modelin ağırlığını kademeli düşür
+        const outlierPenalty = distFromMedian > outlierThreshold
+          ? Math.max(0.1, 1 - (distFromMedian - outlierThreshold) / (outlierThreshold * 2))
+          : 1.0;
+        const effectiveWeight = weight * outlierPenalty;
+        weightedX += pred.x * effectiveWeight;
+        weightedY += pred.y * effectiveWeight;
+        totalWeight += effectiveWeight;
         minConfidence = Math.min(minConfidence, pred.confidence);
       }
     });
