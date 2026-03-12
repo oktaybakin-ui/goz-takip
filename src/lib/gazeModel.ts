@@ -300,8 +300,9 @@ export class OneEuroFilter {
       beta = 0.025 + t * 0.025; // 0.025→0.05
     }
 
-    // Y ekseni göz kapağı etkisinden daha gürültülü → %30 daha fazla smoothing
-    const axisFactor = axis === 'y' ? 0.7 : 1.0;
+    // Y ekseni göz kapağı etkisinden daha gürültülü → %15 daha fazla smoothing
+    // (Eski %30 aşağı drift'e neden oluyordu — yukarı hareket gecikiyordu)
+    const axisFactor = axis === 'y' ? 0.85 : 1.0;
     this.minCutoff = cutoff * confFactor * axisFactor;
     this.beta = beta * confFactor * axisFactor;
   }
@@ -1035,37 +1036,58 @@ export class GazeModel {
     if (typeof window !== "undefined") {
       const sw = window.innerWidth;
       const sh = window.innerHeight;
-      const edgeBandX = sw * 0.08; // %8 kenar bandı (genişletildi)
+      const edgeBandX = sw * 0.08;
       const edgeBandY = sh * 0.08;
+      // Alt kenar bandı daha geniş — aşağı drift'i önlemek için
+      const bottomEdgeBand = sh * 0.12;
       const maxVel = Math.max(velocityX, velocityY);
-      const springStrength = 0.4; // %40 içeri çekme kuvveti (güçlendirildi)
+      const springStrength = 0.4;
+      // Alt kenar spring daha güçlü (aşağı çekilmeye karşı direnç)
+      const bottomSpringStrength = 0.55;
       // Saccade değilse (< 250px/s) spring uygula
       if (maxVel < 250) {
-        // Negatif koordinatlar: ekran dışı → sıfıra çek
+        // Sol kenar
         if (finalX < 0) {
-          finalX *= 0.3; // Ekran dışını %70 azalt
+          finalX *= 0.3;
         } else if (finalX < edgeBandX) {
           const t = 1 - finalX / edgeBandX;
           finalX += t * edgeBandX * springStrength;
         }
+        // Sağ kenar
         if (finalX > sw) {
           finalX = sw + (finalX - sw) * 0.3;
         } else if (finalX > sw - edgeBandX) {
           const t = 1 - (sw - finalX) / edgeBandX;
           finalX -= t * edgeBandX * springStrength;
         }
+        // Üst kenar
         if (finalY < 0) {
           finalY *= 0.3;
         } else if (finalY < edgeBandY) {
           const t = 1 - finalY / edgeBandY;
           finalY += t * edgeBandY * springStrength;
         }
+        // Alt kenar — daha geniş band + daha güçlü spring (aşağı drift kompanzasyonu)
         if (finalY > sh) {
-          finalY = sh + (finalY - sh) * 0.3;
-        } else if (finalY > sh - edgeBandY) {
-          const t = 1 - (sh - finalY) / edgeBandY;
-          finalY -= t * edgeBandY * springStrength;
+          finalY = sh + (finalY - sh) * 0.2; // Daha agresif geri çekme
+        } else if (finalY > sh - bottomEdgeBand) {
+          const t = 1 - (sh - finalY) / bottomEdgeBand;
+          finalY -= t * bottomEdgeBand * bottomSpringStrength;
         }
+      }
+    }
+
+    // Vertical drift kompanzasyonu: son N frame'de sistematik aşağı kayma varsa düzelt
+    // Pitch arttıkça (aşağı bakış) iris Y sinyali bozulur → model alt yarıda hata yapar
+    if (typeof window !== "undefined" && this.predictionHistory.length >= 5) {
+      const sh = window.innerHeight;
+      const screenCenter = sh * 0.5;
+      // Son 5 frame'in ortalama Y pozisyonu
+      const recentY = this.predictionHistory.slice(-5).reduce((s, p) => s + p.y, 0) / 5;
+      // Ekranın alt %30'unda sürekli takılıyorsa hafif yukarı çek
+      if (recentY > sh * 0.70 && finalY > screenCenter) {
+        const pullStrength = Math.min(0.06, (recentY - sh * 0.70) / sh * 0.15);
+        finalY -= (finalY - screenCenter) * pullStrength;
       }
     }
 

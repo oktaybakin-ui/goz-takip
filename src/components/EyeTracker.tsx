@@ -848,8 +848,8 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
       // Ekran sınırlarına soft clamp (model wild extrapolation yapabilir)
       const screenW = window.innerWidth;
       const screenH = window.innerHeight;
-      screenPoint.x = Math.max(-screenW * 0.1, Math.min(screenW * 1.1, screenPoint.x));
-      screenPoint.y = Math.max(-screenH * 0.1, Math.min(screenH * 1.1, screenPoint.y));
+      screenPoint.x = Math.max(-screenW * 0.05, Math.min(screenW * 1.05, screenPoint.x));
+      screenPoint.y = Math.max(-screenH * 0.05, Math.min(screenH * 1.05, screenPoint.y));
 
       const imageRectForClamp = getImageRect();
       if (imageRectForClamp) {
