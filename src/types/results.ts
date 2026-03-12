@@ -13,6 +13,8 @@ export interface ResultPerImage {
   saccades?: Saccade[];
   metrics: FixationMetrics | null;
   imageDimensions: { width: number; height: number };
+  /** Fotoğrafın doğal (orijinal) piksel boyutları — heatmap hizalama için */
+  imageNaturalDimensions?: { width: number; height: number };
   blinkEvents?: BlinkEvent[];
   blinkMetrics?: BlinkMetrics;
   scanpathMetrics?: ScanpathMetrics;

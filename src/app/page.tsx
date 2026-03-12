@@ -120,16 +120,29 @@ export default function HomePage() {
 
   const handleRecordingReady = useCallback(
     async (blob: Blob) => {
-      if (!sessionId) return;
+      if (!sessionId) {
+        console.warn("[Recording] sessionId yok, yükleme atlandı");
+        return;
+      }
+      if (!blob || blob.size === 0) {
+        console.warn("[Recording] Boş blob, yükleme atlandı");
+        return;
+      }
       try {
+        console.log(`[Recording] Yükleniyor: ${(blob.size / 1024 / 1024).toFixed(1)} MB → session ${sessionId}`);
         const formData = new FormData();
         formData.append("video", blob, "recording.webm");
-        await fetch(`/api/sessions/${sessionId}/recording`, {
+        const res = await fetch(`/api/sessions/${sessionId}/recording`, {
           method: "POST",
           body: formData,
         });
-      } catch {
-        // Kayıt yükleme başarısız olsa bile kullanıcıyı etkilemez
+        if (!res.ok) {
+          console.error(`[Recording] Yükleme hatası: ${res.status} ${res.statusText}`);
+        } else {
+          console.log("[Recording] Yükleme başarılı");
+        }
+      } catch (err) {
+        console.error("[Recording] Yükleme hatası:", err);
       }
     },
     [sessionId]

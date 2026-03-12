@@ -56,7 +56,60 @@ export default function ResultsPanel({
     [isMulti, resultsPerImage, selectedPhotoIndex, gazePointsProp]
   );
   const imageUrl = isMulti ? resultsPerImage![selectedPhotoIndex]?.imageUrl : imageUrlProp;
-  const imageDimensions = isMulti ? resultsPerImage![selectedPhotoIndex]?.imageDimensions : imageDimensionsProp;
+  const storedDimensions = isMulti ? resultsPerImage![selectedPhotoIndex]?.imageDimensions : imageDimensionsProp;
+  const imageNaturalDimensions = isMulti ? resultsPerImage![selectedPhotoIndex]?.imageNaturalDimensions : undefined;
+
+  // Multi-image'da farklı en-boy oranlı fotoğraflar ilk fotoğrafın boyutlarıyla kaydedilir.
+  // Heatmap hizalaması için doğal boyutlar üzerinden yeni display boyutu hesapla.
+  const imageDimensions = useMemo(() => {
+    if (!storedDimensions) return storedDimensions;
+    if (!imageNaturalDimensions || imageNaturalDimensions.width === 0 || imageNaturalDimensions.height === 0) {
+      return storedDimensions;
+    }
+    // Doğal en-boy oranı stored ile eşleşiyorsa dönüşüm gereksiz
+    const storedAR = storedDimensions.width / storedDimensions.height;
+    const natAR = imageNaturalDimensions.width / imageNaturalDimensions.height;
+    if (Math.abs(storedAR - natAR) < 0.02) return storedDimensions;
+    // Stored max boyut içinde doğal en-boy oranına uygun yeni boyut hesapla
+    const maxW = storedDimensions.width;
+    const maxH = storedDimensions.height;
+    const scale = Math.min(maxW / imageNaturalDimensions.width, maxH / imageNaturalDimensions.height);
+    return {
+      width: Math.round(imageNaturalDimensions.width * scale),
+      height: Math.round(imageNaturalDimensions.height * scale),
+    };
+  }, [storedDimensions, imageNaturalDimensions]);
+
+  // Gaze ve fixation koordinatlarını stored → proper boyuta dönüştür
+  const transformCoord = useMemo(() => {
+    if (!storedDimensions || !imageDimensions) return null;
+    if (storedDimensions.width === imageDimensions.width && storedDimensions.height === imageDimensions.height) {
+      return null; // Dönüşüm gereksiz
+    }
+    const scaleX = imageDimensions.width / storedDimensions.width;
+    const scaleY = imageDimensions.height / storedDimensions.height;
+    return { scaleX, scaleY };
+  }, [storedDimensions, imageDimensions]);
+
+  // Dönüştürülmüş gaze noktaları
+  const transformedGazePoints = useMemo(() => {
+    if (!transformCoord) return gazePoints;
+    return gazePoints.map(p => ({
+      ...p,
+      x: p.x * transformCoord.scaleX,
+      y: p.y * transformCoord.scaleY,
+    }));
+  }, [gazePoints, transformCoord]);
+
+  // Dönüştürülmüş fixations
+  const transformedFixations = useMemo(() => {
+    if (!transformCoord || !metrics) return metrics?.allFixations ?? [];
+    return (metrics.allFixations ?? []).map(f => ({
+      ...f,
+      x: f.x * transformCoord.scaleX,
+      y: f.y * transformCoord.scaleY,
+    }));
+  }, [metrics, transformCoord]);
 
   const quality = useMemo<QualityMetrics | null>(() => {
     if (!imageDimensions || gazePoints.length < 2) return null;
@@ -84,7 +137,8 @@ export default function ResultsPanel({
     canvas.height = imageDimensions.height;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    const sortedFixations = [...metrics.allFixations].sort((a, b) => a.startTime - b.startTime);
+    const fixToDraw = transformedFixations.length > 0 ? transformedFixations : (metrics.allFixations ?? []);
+    const sortedFixations = [...fixToDraw].sort((a, b) => a.startTime - b.startTime);
 
     for (let i = 0; i < sortedFixations.length - 1; i++) {
       const from = sortedFixations[i];
@@ -137,7 +191,7 @@ export default function ResultsPanel({
       ctx.textBaseline = "middle";
       ctx.fillText(`${i + 1}`, fix.x, fix.y);
     });
-  }, [metrics, activeTab, imageDimensions]);
+  }, [metrics, activeTab, imageDimensions, transformedFixations]);
 
   const clusterCanvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -163,9 +217,14 @@ export default function ResultsPanel({
     metrics.roiClusters.forEach((cluster, i) => {
       const color = colors[i % colors.length];
       const borderColor = color.replace("0.25", "0.7");
+      // Koordinat dönüşümü (multi-image farklı en-boy oranı)
+      const cx = transformCoord ? cluster.centerX * transformCoord.scaleX : cluster.centerX;
+      const cy = transformCoord ? cluster.centerY * transformCoord.scaleY : cluster.centerY;
+      const avgScale = transformCoord ? (transformCoord.scaleX + transformCoord.scaleY) / 2 : 1;
+      const r = cluster.radius * avgScale;
 
       ctx.beginPath();
-      ctx.arc(cluster.centerX, cluster.centerY, cluster.radius, 0, Math.PI * 2);
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fillStyle = color;
       ctx.fill();
       ctx.strokeStyle = borderColor;
@@ -177,17 +236,17 @@ export default function ResultsPanel({
       ctx.font = "bold 11px system-ui";
       ctx.fillStyle = "white";
       ctx.textAlign = "center";
-      ctx.fillText(`ROI ${cluster.id + 1}`, cluster.centerX, cluster.centerY - cluster.radius - 6);
+      ctx.fillText(`ROI ${cluster.id + 1}`, cx, cy - r - 6);
     });
-  }, [metrics, activeTab, imageDimensions]);
+  }, [metrics, activeTab, imageDimensions, transformCoord]);
 
   const formatMs = (ms: number) => {
     if (ms < 1000) return `${Math.round(ms)} ms`;
     return `${(ms / 1000).toFixed(1)} s`;
   };
 
-  const selectedFixations = metrics?.allFixations ?? [];
-  const hasHeatmapData = gazePoints.length > 0 || selectedFixations.length > 0;
+  const selectedFixations = transformedFixations.length > 0 ? transformedFixations : (metrics?.allFixations ?? []);
+  const hasHeatmapData = transformedGazePoints.length > 0 || selectedFixations.length > 0;
 
   const handleExportHeatmapForPhoto = (index: number) => {
     if (!resultsPerImage?.[index]) return;
@@ -315,7 +374,7 @@ export default function ResultsPanel({
           {/* Replay sekmesi */}
           {activeTab === "replay" && (
             <GazeReplay
-              gazePoints={gazePoints}
+              gazePoints={transformedGazePoints}
               fixations={selectedFixations}
               width={imageDimensions.width}
               height={imageDimensions.height}
@@ -326,7 +385,7 @@ export default function ResultsPanel({
           {/* AOI Analizi sekmesi */}
           {activeTab === "aoi" && (
             <AOIDrawingTool
-              gazePoints={gazePoints}
+              gazePoints={transformedGazePoints}
               fixations={selectedFixations}
               width={imageDimensions.width}
               height={imageDimensions.height}
@@ -360,7 +419,7 @@ export default function ResultsPanel({
                   </div>
                 ) : (
                   <HeatmapCanvas
-                    gazePoints={gazePoints}
+                    gazePoints={transformedGazePoints}
                     fixations={selectedFixations}
                     width={imageDimensions.width}
                     height={imageDimensions.height}

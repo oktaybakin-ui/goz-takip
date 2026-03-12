@@ -154,6 +154,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
   const fixationsByImageRef = useRef<Fixation[][]>([]);
   const metricsByImageRef = useRef<(FixationMetrics | null)[]>([]);
   const dimensionsByImageRef = useRef<Array<{ width: number; height: number }>>([]);
+  const naturalDimensionsByImageRef = useRef<Array<{ width: number; height: number }>>([]);
   const saccadesByImageRef = useRef<Saccade[][]>([]);
   const blinkEventsByImageRef = useRef<BlinkEvent[][]>([]);
   const blinkMetricsByImageRef = useRef<(BlinkMetrics | null)[]>([]);
@@ -172,6 +173,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
       fixationsByImageRef.current = Array.from({ length: imageCount }, () => []);
       metricsByImageRef.current = Array(imageCount).fill(null);
       dimensionsByImageRef.current = Array.from({ length: imageCount }, () => ({ width: 0, height: 0 }));
+      naturalDimensionsByImageRef.current = Array.from({ length: imageCount }, () => ({ width: 0, height: 0 }));
       saccadesByImageRef.current = Array.from({ length: imageCount }, () => []);
       blinkEventsByImageRef.current = Array.from({ length: imageCount }, () => []);
       blinkMetricsByImageRef.current = Array(imageCount).fill(null);
@@ -232,6 +234,10 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
         setImageDimensions(firstImageDimsRef.current);
         if (currentImageIndex < dimensionsByImageRef.current.length) {
           dimensionsByImageRef.current[currentImageIndex] = firstImageDimsRef.current;
+        }
+        // Her fotoğrafın doğal boyutlarını ayrıca kaydet — heatmap hizalama için
+        if (currentImageIndex < naturalDimensionsByImageRef.current.length) {
+          naturalDimensionsByImageRef.current[currentImageIndex] = { width: img.naturalWidth, height: img.naturalHeight };
         }
       } else {
         setImageDimensions(dims);
@@ -370,6 +376,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
     fixationsByImageRef.current[idx] = fixationDetectorRef.current.getFixations();
     metricsByImageRef.current[idx] = currentMetricsSnap;
     dimensionsByImageRef.current[idx] = imageDimensions;
+    naturalDimensionsByImageRef.current[idx] = { ...imageNaturalDimensions };
     saccadesByImageRef.current[idx] = currentMetricsSnap.saccades;
     logger.log(`[EyeTracker] Image ${idx} results — gazePoints: ${gazePointsByImageRef.current[idx].length}, fixations: ${currentMetricsSnap.fixationCount}, saccades: ${currentMetricsSnap.saccades.length}, ROI: ${currentMetricsSnap.roiClusters.length}`);
     blinkEventsByImageRef.current[idx] = blinkDetectorRef.current.getBlinkEvents();
@@ -391,6 +398,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
         saccades: saccadesByImageRef.current[i] ?? [],
         metrics: metricsByImageRef.current[i] ?? null,
         imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
+        imageNaturalDimensions: naturalDimensionsByImageRef.current[i] ?? undefined,
         blinkEvents: blinkEventsByImageRef.current[i] ?? [],
         blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
@@ -992,6 +1000,12 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
     fixationDetectorRef.current.stopTracking();
     faceTrackerRef.current.stopTracking();
 
+    // Webcam kaydını durdur (tek görsel modu veya manuel durdurma)
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+      logger.log("[EyeTracker] Webcam kaydı durduruldu (stopTracking)");
+    }
+
     const currentMetrics = fixationDetectorRef.current.getMetrics();
     logger.log(`[EyeTracker] stopTracking — gazePoints: ${gazePointsRef.current.length}, fixations: ${currentMetrics.fixationCount}, saccades: ${currentMetrics.saccades.length}, ROI: ${currentMetrics.roiClusters.length}`);
     setMetrics(currentMetrics);
@@ -1003,6 +1017,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
       fixationsByImageRef.current[idx] = fixationDetectorRef.current.getFixations();
       metricsByImageRef.current[idx] = currentMetrics;
       dimensionsByImageRef.current[idx] = imageDimensions;
+      naturalDimensionsByImageRef.current[idx] = { ...imageNaturalDimensions };
       saccadesByImageRef.current[idx] = currentMetrics.saccades;
       blinkEventsByImageRef.current[idx] = blinkDetectorRef.current.getBlinkEvents();
       blinkMetricsByImageRef.current[idx] = blinkDetectorRef.current.getMetrics();
@@ -1014,6 +1029,7 @@ export default function EyeTracker({ imageUrls, onReset, onTrackingComplete, onR
         saccades: saccadesByImageRef.current[i] ?? [],
         metrics: metricsByImageRef.current[i] ?? null,
         imageDimensions: dimensionsByImageRef.current[i] ?? { width: 0, height: 0 },
+        imageNaturalDimensions: naturalDimensionsByImageRef.current[i] ?? undefined,
         blinkEvents: blinkEventsByImageRef.current[i] ?? [],
         blinkMetrics: blinkMetricsByImageRef.current[i] ?? undefined,
       }));
